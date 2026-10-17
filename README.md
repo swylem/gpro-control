@@ -8,6 +8,7 @@ Small GTK4 app for Logitech G PRO wireless mice (G PRO Wireless, PRO X Superligh
   - **Low battery**: on battery and the level drops to X% (default 20%, heads-up at 30%)
   - **Charge limit**: charging and the level reaches X% (default 80%, heads-up at 75%), so you can unplug
 - lives in the system tray: the icon is a mouse whose fill height is the battery percentage and whose colour is the state (green, amber below 50%, red below 20%, blue with a lightning bolt while charging). The same mouse is the app icon in the menu and taskbar, the tooltip shows battery and DPI, and left-click shows or hides the window
+- setup check (Settings page): looks at your desktop and fixes what's missing with one click each: adds the tray to Waybar, installs and enables GNOME's AppIndicator extension, installs a notification daemon (dunst), adds the startup line to Hyprland/Sway/i3/niri/river/Wayfire, or installs the mouse permission rule. Config files get a timestamped backup first. It opens by itself the first time something is missing on a desktop
 - settings: appearance (System / Light / Dark, for this window only), what closing the window does (keep running in the tray, or quit), tray icon outline, and start at login
 
 It talks HID++ 2.0 directly over `/dev/hidraw*`, both over the USB cable and through the LIGHTSPEED receiver. Dependencies: `python`, `python-gobject`, `gtk4` and `librsvg` (to draw the icon), nothing else.
@@ -24,7 +25,7 @@ This installs `/usr/bin/gpro-control`, a menu entry, a systemd user service for 
 
 ## Compatibility
 
-Works on any Arch-based distro (Arch, CachyOS, EndeavourOS, Manjaro, Garuda, ...) with any desktop or compositor, X11 or Wayland. The window and mouse control work everywhere. The extras depend on what your desktop provides, and the app degrades gracefully without them:
+Works on any Arch-based distro (Arch, CachyOS, EndeavourOS, Manjaro, Garuda, ...) with any desktop or compositor, X11 or Wayland. The window and mouse control work everywhere. The extras depend on what your desktop provides. Settings → **Setup check** detects what's missing and offers a one-click fix, and without a fix the app still degrades gracefully:
 
 | Feature | Needs | Without it |
 |---|---|---|

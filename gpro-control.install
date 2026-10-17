@@ -1,0 +1,6 @@
+post_install() {
+    echo ":: Open G PRO Control from your app menu (or run: gpro-control)."
+    echo "   Settings > Setup check looks at this desktop and fixes anything"
+    echo "   missing (tray, notifications, start at login) with one click."
+    echo "   If the mouse was plugged in before installing, replug its receiver."
+}

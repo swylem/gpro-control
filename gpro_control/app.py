@@ -9,12 +9,14 @@ import math  # noqa: E402
 import os  # noqa: E402
 import re  # noqa: E402
 import shutil  # noqa: E402
+import threading  # noqa: E402
 
 from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from .alerts import notify  # noqa: E402
 from .backend import Backend, Snapshot  # noqa: E402
 from . import icons  # noqa: E402
+from . import setupcheck  # noqa: E402
 from .config import CONFIG_DIR, alert_settings, load_config  # noqa: E402
 from .tray import MenuItem, TrayIcon  # noqa: E402
 
@@ -28,6 +30,10 @@ CSS = b"""
 .section { font-weight: 700; opacity: 0.8; }
 .dim { opacity: 0.65; }
 levelbar block.filled.low { background: #e01b24; }
+.setup-ok { color: #22c55e; }
+.setup-warn { color: #f59e0b; }
+.setup-info { opacity: 0.6; }
+.setup-title { font-weight: 600; }
 """
 
 STATUS_TEXT = {
@@ -48,32 +54,6 @@ ALERT_MODE_TEXT = {
 CLOSE_ACTIONS = [("tray", "Keep running in the tray"), ("quit", "Quit G PRO Control")]
 APPEARANCES = [("system", "System"), ("light", "Light"), ("dark", "Dark")]
 TRAY_OUTLINES = [("auto", "Match system"), ("light", "White"), ("dark", "Black")]
-
-# Desktops that run ~/.config/autostart entries at login. Bare compositors and
-# window managers usually don't (unless started through uwsm or dex).
-XDG_AUTOSTART_DESKTOPS = {"kde", "gnome", "xfce", "lxqt", "lxde", "mate", "cinnamon", "x-cinnamon", "budgie",
-                          "deepin", "pantheon", "unity", "cosmic", "enlightenment", "trinity"}
-
-AUTOSTART_HINTS = {
-    "hyprland": "exec-once = gpro-control --hidden",
-    "sway": "exec gpro-control --hidden",
-    "i3": "exec --no-startup-id gpro-control --hidden",
-    "niri": 'spawn-at-startup "gpro-control" "--hidden"',
-    "river": "riverctl spawn 'gpro-control --hidden'",
-    "wayfire": "autostart: gpro = gpro-control --hidden",
-}
-
-
-def autostart_hint():
-    """A note for desktops that ignore XDG autostart, or None."""
-    names = [d for d in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":") if d]
-    desktops = [d.lower() for d in names]
-    if any(d in XDG_AUTOSTART_DESKTOPS or d.startswith("budgie") for d in desktops) or os.environ.get("UWSM_FINALIZE_VARNAMES"):
-        return None
-    line = AUTOSTART_HINTS.get(desktops[0] if desktops else "", "gpro-control --hidden")
-    return (f"{names[0] if names else 'Your desktop'} may not run login apps by itself. "
-            f"If the app doesn't start at login, add this to its startup config:\n{line}")
-
 
 THEME_DIRS = [os.path.expanduser("~/.local/share/themes"), os.path.expanduser("~/.themes"), "/usr/share/themes"]
 BUILTIN_THEMES = {"Adwaita", "Default", "HighContrast", "HighContrastInverse"}  # compiled into GTK, light + dark
@@ -133,8 +113,6 @@ def theme_palette_css(theme, dark):
     return "".join(f"@define-color {k} {v};\n" for k, v in palette.items())
 
 
-AUTOSTART_FILE = os.path.join(os.path.dirname(CONFIG_DIR), "autostart", "gpro-control.desktop")
-
 UDEV_HINT = (
     "No permission to talk to the mouse, so DPI can't be changed.\n"
     "Install the udev rule (see README) and replug the mouse or receiver."
@@ -156,6 +134,9 @@ class Window(Gtk.ApplicationWindow):
         self.dpi_info = None
         self._syncing = False
         self._spin_prev = 0
+        self._syncing_autostart = False
+        self.setup_checks = []
+        self._setup_msgs = {}
 
         self.connect("close-request", self._on_close_request)
 
@@ -244,7 +225,10 @@ class Window(Gtk.ApplicationWindow):
         self.backend = Backend(lambda snap: GLib.idle_add(self._update, snap))
         self.settings = dict(self.backend.config)  # UI-side copy; the backend saves
         self.stack.add_titled(self._page(self._build_alerts(alert_settings(self.backend.config))), "alerts", "Alerts")
-        self.stack.add_titled(self._page(self._build_settings()), "settings", "Settings")
+        # The setup check can grow; scroll inside the page rather than stretch the window.
+        settings_page = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                           child=self._page(self._build_setup(), self._build_settings()))
+        self.stack.add_titled(settings_page, "settings", "Settings")
         outer.append(self.msg_lbl)
         self.restore_chk.set_active(self.backend.config.get("restore", True))
         self.restore_chk.connect("toggled", lambda b: self.backend.set_restore(b.get_active()))
@@ -272,6 +256,70 @@ class Window(Gtk.ApplicationWindow):
             self.set_visible(False)
         else:
             self.present()
+
+    # -- setup check ------------------------------------------------------------
+
+    def _build_setup(self):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, css_classes=["card"])
+        head = Gtk.Box()
+        head.append(_label("Setup check", ["section"], hexpand=True))
+        again = Gtk.Button(label="Check again")
+        again.connect("clicked", lambda *_: self.run_setup_check())
+        head.append(again)
+        card.append(head)
+        self.setup_rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        card.append(self.setup_rows)
+        GLib.idle_add(self.run_setup_check)
+        return card
+
+    def run_setup_check(self, *_):
+        self.setup_checks = setupcheck.run_checks(self.get_application().tray_available())
+        while child := self.setup_rows.get_first_child():
+            self.setup_rows.remove(child)
+        icon_names = {setupcheck.OK: "emblem-ok-symbolic", setupcheck.WARN: "dialog-warning-symbolic",
+                      setupcheck.INFO: "dialog-information-symbolic"}
+        for check in self.setup_checks:
+            row = Gtk.Box(spacing=10)
+            icon = Gtk.Image.new_from_icon_name(icon_names[check.state])
+            icon.add_css_class(f"setup-{check.state}")
+            icon.set_valign(Gtk.Align.START)
+            row.append(icon)
+            text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+            text.append(_label(check.title, ["setup-title"]))
+            # Details can carry a command to copy, so keep multi-line ones selectable.
+            text.append(_label(check.detail, ["dim"], wrap=True, selectable="\n" in check.detail))
+            if check.key in self._setup_msgs:
+                text.append(_label(self._setup_msgs[check.key], ["dim"], wrap=True, selectable=True))
+            row.append(text)
+            if check.fix:
+                button = Gtk.Button(label=check.fix_label, valign=Gtk.Align.CENTER)
+                button.connect("clicked", lambda b, c=check: self._run_fix(c, b))
+                row.append(button)
+            self.setup_rows.append(row)
+        self._syncing_autostart = True
+        self.autostart_chk.set_active(setupcheck.autostart_enabled())
+        self._syncing_autostart = False
+        return False
+
+    def _run_fix(self, check, button):
+        button.set_sensitive(False)
+        button.set_label("Working…")
+
+        def done(ok, msg):
+            if msg:
+                self._setup_msgs[check.key] = msg
+            self.run_setup_check()
+            GLib.timeout_add_seconds(2, self.run_setup_check)  # trays and bars take a moment to appear
+            return False
+
+        def work():
+            try:
+                ok, msg = check.fix()
+            except Exception as e:  # a fix must never take the app down
+                ok, msg = False, f"That didn't work: {e}"
+            GLib.idle_add(done, ok, msg)
+
+        threading.Thread(target=work, daemon=True).start()
 
     # -- settings -------------------------------------------------------------
 
@@ -307,13 +355,11 @@ class Window(Gtk.ApplicationWindow):
         row.append(outline_dd)
         card.append(row)
 
-        self.autostart_chk = Gtk.CheckButton(label="Start at login (in the tray)", active=os.path.exists(AUTOSTART_FILE))
+        self.autostart_chk = Gtk.CheckButton(label="Start at login (in the tray)", active=setupcheck.autostart_enabled())
         self.autostart_chk.connect("toggled", lambda b: self._set_autostart(b.get_active()))
+        # Bare compositors ignore the autostart folder; the setup check handles them instead.
+        self.autostart_chk.set_visible(setupcheck.runs_xdg_autostart())
         card.append(self.autostart_chk)
-
-        hint = autostart_hint()
-        if hint:
-            card.append(_label(hint, ["dim"], wrap=True, selectable=True))
 
         self.tray_note = _label("", ["dim"], wrap=True)
         card.append(self.tray_note)
@@ -328,8 +374,7 @@ class Window(Gtk.ApplicationWindow):
         if self.get_application().tray_available():
             self.tray_note.set_text("Quit from the tray icon's menu, this button, or Ctrl+Q.")
         else:
-            self.tray_note.set_text("No system tray found, so closing the window quits the app. "
-                                    "Waybar: enable its \"tray\" module. GNOME: install the AppIndicator extension.")
+            self.tray_note.set_text("No system tray found, so closing the window quits the app.")
 
     def _set_appearance(self, value):
         self._set_setting("appearance", value)
@@ -344,18 +389,10 @@ class Window(Gtk.ApplicationWindow):
         self.backend.set_setting(key, value)
 
     def _set_autostart(self, enabled):
-        if not enabled:
-            try:
-                os.remove(AUTOSTART_FILE)
-            except FileNotFoundError:
-                pass
+        if self._syncing_autostart:
             return
-        # Installed: the launcher on PATH. From a checkout: the launcher next to the package.
-        exe = shutil.which("gpro-control") or os.path.join(os.path.dirname(os.path.dirname(__file__)), "gpro-control")
-        os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
-        with open(AUTOSTART_FILE, "w") as f:
-            f.write("[Desktop Entry]\nType=Application\nName=G PRO Control\n"
-                    f"Exec={exe} --hidden\nIcon=io.github.gpro_control\nX-GNOME-Autostart-enabled=true\n")
+        setupcheck.set_autostart(enabled)
+        self.run_setup_check()
 
     # -- alerts -------------------------------------------------------------
 
@@ -605,6 +642,7 @@ class App(Gtk.Application):
     def do_activate(self):
         if not self.window:
             self.window = Window(self)
+            GLib.timeout_add_seconds(3, self._prompt_setup)
             if self.start_hidden:
                 self.start_hidden = False
                 # The tray registers asynchronously, and at login the panel or bar
@@ -692,6 +730,20 @@ class App(Gtk.Application):
     def tray_available(self):
         return bool(self.tray and self.tray.available)
 
+    def _prompt_setup(self):
+        """Open the setup check once for each new set of problems (first run,
+        or after switching desktop), not every launch."""
+        w = self.window
+        w.run_setup_check()
+        problems = sorted(c.key for c in w.setup_checks if c.state == setupcheck.WARN)
+        seen = f"{':'.join(setupcheck.desktop_names())}/{','.join(problems)}"
+        if problems and w.settings.get("setup_prompted") != seen:
+            w.stack.set_visible_child_name("settings")
+            w.present()
+            w.msg_lbl.set_text("A few things need setting up on this desktop. See Setup check above.")
+            w._set_setting("setup_prompted", seen)
+        return False
+
     def _show_if_no_tray(self):
         if not self.tray_available():
             self.window.present()
@@ -704,6 +756,7 @@ class App(Gtk.Application):
     def _on_tray_available(self, available):
         if self.window:
             self.window.update_tray_note()
+            self.window.run_setup_check()
             if not available and not self.window.is_visible():
                 self.window.present()  # never leave the app running with no way back in
 
