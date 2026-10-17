@@ -7,6 +7,7 @@ gi.require_version("Gdk", "4.0")
 import bisect  # noqa: E402
 import math  # noqa: E402
 import os  # noqa: E402
+import re  # noqa: E402
 import shutil  # noqa: E402
 
 from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
@@ -45,6 +46,7 @@ ALERT_MODE_TEXT = {
 }
 
 CLOSE_ACTIONS = [("tray", "Keep running in the tray"), ("quit", "Quit G PRO Control")]
+APPEARANCES = [("system", "System"), ("light", "Light"), ("dark", "Dark")]
 TRAY_OUTLINES = [("auto", "Match system"), ("light", "White"), ("dark", "Black")]
 
 # Desktops that run ~/.config/autostart entries at login. Bare compositors and
@@ -71,6 +73,64 @@ def autostart_hint():
     line = AUTOSTART_HINTS.get(desktops[0] if desktops else "", "gpro-control --hidden")
     return (f"{names[0] if names else 'Your desktop'} may not run login apps by itself. "
             f"If the app doesn't start at login, add this to its startup config:\n{line}")
+
+
+THEME_DIRS = [os.path.expanduser("~/.local/share/themes"), os.path.expanduser("~/.themes"), "/usr/share/themes"]
+BUILTIN_THEMES = {"Adwaita", "Default", "HighContrast", "HighContrastInverse"}  # compiled into GTK, light + dark
+
+
+def _theme_has(name, css="gtk.css"):
+    if name in BUILTIN_THEMES:
+        return True
+    return any(os.path.exists(os.path.join(d, name, "gtk-4.0", css)) for d in THEME_DIRS)
+
+
+USER_GTK_CSS = os.path.join(os.path.dirname(CONFIG_DIR), "gtk-4.0", "colors.css")
+_COLOR_RE = re.compile(r"@define-color\s+([\w-]+)\s+([^;]+);")
+
+
+def _read_css(path, depth=0):
+    """A stylesheet's text with its @import url(...) lines inlined."""
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError:
+        return ""
+    if depth < 3:
+        def inline(m):
+            return _read_css(os.path.normpath(os.path.join(os.path.dirname(path), m.group(1))), depth + 1)
+        text = re.sub(r'@import\s+url\(["\']?([^"\')]+)["\']?\);', inline, text)
+    return text
+
+
+def theme_palette_css(theme, dark):
+    """@define-color lines restoring `theme`'s own light or dark colours.
+
+    Desktops write their colour scheme into ~/.config/gtk-4.0 (KDE does), and
+    that user stylesheet beats any theme variant. Loaded above it, this
+    puts the chosen variant's colours back. Empty if the theme isn't a file.
+    """
+    names = ["gtk-dark.css", "gtk.css"] if dark else ["gtk.css"]
+    for d in THEME_DIRS:
+        for name in names:
+            path = os.path.join(d, theme, "gtk-4.0", name)
+            if os.path.exists(path):
+                palette = dict(_COLOR_RE.findall(_read_css(path)))
+                break
+        else:
+            continue
+        break
+    else:
+        return ""
+    # Colours the desktop adds that the theme doesn't define (KDE's header bar ones).
+    bg = palette.get("theme_bg_color_breeze") or palette.get("theme_bg_color") or "@theme_bg_color"
+    fg = palette.get("theme_fg_color_breeze") or palette.get("theme_fg_color") or "@theme_fg_color"
+    dim = palette.get("insensitive_fg_color_breeze") or palette.get("insensitive_fg_color") or fg
+    for extra in _COLOR_RE.findall(_read_css(USER_GTK_CSS)):
+        name = extra[0]
+        if name not in palette:
+            palette[name] = dim if "insensitive" in name else fg if "foreground" in name else bg
+    return "".join(f"@define-color {k} {v};\n" for k, v in palette.items())
 
 
 AUTOSTART_FILE = os.path.join(os.path.dirname(CONFIG_DIR), "autostart", "gpro-control.desktop")
@@ -220,6 +280,15 @@ class Window(Gtk.ApplicationWindow):
         card.append(_label("General", ["section"]))
 
         row = Gtk.Box(spacing=8)
+        row.append(_label("Appearance", hexpand=True, tooltip_text="Light or dark for this window only"))
+        look_dd = Gtk.DropDown.new_from_strings([text for _, text in APPEARANCES])
+        look_keys = [key for key, _ in APPEARANCES]
+        look_dd.set_selected(look_keys.index(self.settings.get("appearance", "system")))
+        look_dd.connect("notify::selected", lambda dd, _p: self._set_appearance(look_keys[dd.get_selected()]))
+        row.append(look_dd)
+        card.append(row)
+
+        row = Gtk.Box(spacing=8)
         row.append(_label("When closing the window", hexpand=True))
         self.close_dd = Gtk.DropDown.new_from_strings([text for _, text in CLOSE_ACTIONS])
         keys = [key for key, _ in CLOSE_ACTIONS]
@@ -261,6 +330,10 @@ class Window(Gtk.ApplicationWindow):
         else:
             self.tray_note.set_text("No system tray found, so closing the window quits the app. "
                                     "Waybar: enable its \"tray\" module. GNOME: install the AppIndicator extension.")
+
+    def _set_appearance(self, value):
+        self._set_setting("appearance", value)
+        self.get_application().apply_appearance(value)
 
     def _set_outline(self, value):
         self._set_setting("tray_outline", value)
@@ -506,6 +579,10 @@ class App(Gtk.Application):
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        settings = Gtk.Settings.get_default()
+        self._system_look = (settings.props.gtk_theme_name, settings.props.gtk_interface_color_scheme)
+        self.apply_appearance(load_config().get("appearance", "system"))
+
         quit_action = Gio.SimpleAction.new("quit", None)
         quit_action.connect("activate", lambda *_: self.quit())
         self.add_action(quit_action)
@@ -581,6 +658,36 @@ class App(Gtk.Application):
             self.update_tray(self._last_snapshot)
         else:
             self.tray.set_icon_pixmaps(("none", self.tray_fg), icons.tray_pixmaps(None, fg=self.tray_fg))
+
+    def apply_appearance(self, mode):
+        """Force this app light or dark, or go back to the desktop's setting."""
+        settings = Gtk.Settings.get_default()
+        theme, scheme = self._system_look
+        if mode in ("light", "dark"):
+            dark = mode == "dark"
+            # Use the theme's base variant (Breeze-Dark -> Breeze) so both modes exist;
+            # fall back to a separate "-Dark" theme when the base has no dark stylesheet.
+            base = re.sub(r"[-_ ]?dark$", "", theme or "", flags=re.IGNORECASE)
+            if base and _theme_has(base):
+                theme = base
+            if dark and not _theme_has(theme, "gtk-dark.css") and _theme_has(f"{base}-Dark"):
+                theme = f"{base}-Dark"
+            scheme = Gtk.InterfaceColorScheme.DARK if dark else Gtk.InterfaceColorScheme.LIGHT
+        # gtk-interface-color-scheme (GTK 4.20+) replaces the deprecated
+        # gtk-application-prefer-dark-theme; setting both makes them fight.
+        settings.props.gtk_theme_name = theme
+        settings.props.gtk_interface_color_scheme = scheme
+
+        display = Gdk.Display.get_default()
+        if getattr(self, "_palette_provider", None):
+            Gtk.StyleContext.remove_provider_for_display(display, self._palette_provider)
+            self._palette_provider = None
+        css = theme_palette_css(theme, mode == "dark") if mode in ("light", "dark") else ""
+        if css:
+            self._palette_provider = Gtk.CssProvider()
+            self._palette_provider.load_from_string(css)
+            Gtk.StyleContext.add_provider_for_display(display, self._palette_provider,
+                                                      Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
 
     def tray_available(self):
         return bool(self.tray and self.tray.available)
