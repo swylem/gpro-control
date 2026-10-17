@@ -236,7 +236,7 @@ class Window(Gtk.ApplicationWindow):
         os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
         with open(AUTOSTART_FILE, "w") as f:
             f.write("[Desktop Entry]\nType=Application\nName=G PRO Control\n"
-                    f"Exec={exe} --hidden\nIcon=gpro-control\nX-GNOME-Autostart-enabled=true\n")
+                    f"Exec={exe} --hidden\nIcon=io.github.gpro_control\nX-GNOME-Autostart-enabled=true\n")
 
     # -- alerts -------------------------------------------------------------
 
@@ -463,7 +463,7 @@ class App(Gtk.Application):
             self.tray.set_icon_pixmaps(None, icons.tray_pixmaps(None, fg=self.tray_fg))
         except GLib.Error:
             self.tray = None
-        Gtk.Window.set_default_icon_name("gpro-control")
+        Gtk.Window.set_default_icon_name(icons.ICON_NAME)
         self.hold()  # keep running while the window is hidden in the tray
 
     def do_shutdown(self):

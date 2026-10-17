@@ -1,6 +1,6 @@
 # Local package: build with `makepkg -si` from this directory.
 pkgname=gpro-control
-pkgver=0.4.1
+pkgver=0.5.0
 pkgrel=1
 pkgdesc="Battery status and DPI control for Logitech G PRO wireless mice"
 arch=('any')
@@ -15,6 +15,6 @@ package() {
     install -Dm644 60-gpro-control.rules "$pkgdir/usr/lib/udev/rules.d/60-gpro-control.rules"
     install -Dm644 gpro-control-monitor.service -t "$pkgdir/usr/lib/systemd/user/"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-    install -Dm644 gpro-control.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/gpro-control.svg"
-    install -Dm644 gpro-control.desktop "$pkgdir/usr/share/applications/gpro-control.desktop"
+    install -Dm644 io.github.gpro_control.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps/"
+    install -Dm644 io.github.gpro_control.desktop -t "$pkgdir/usr/share/applications/"
 }

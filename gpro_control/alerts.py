@@ -24,14 +24,14 @@ def notify(key, summary, body, critical=False):
     Returns False if no notification server could be reached."""
     hints = {
         "urgency": GLib.Variant("y", 2 if critical else 1),
-        "desktop-entry": GLib.Variant("s", "gpro-control"),
+        "desktop-entry": GLib.Variant("s", "io.github.gpro_control"),
     }
     try:
         bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         reply = bus.call_sync(
             "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
             "org.freedesktop.Notifications", "Notify",
-            GLib.Variant("(susssasa{sv}i)", ("G PRO Control", _notification_ids.get(key, 0), "gpro-control",
+            GLib.Variant("(susssasa{sv}i)", ("G PRO Control", _notification_ids.get(key, 0), "io.github.gpro_control",
                                              summary, body, [], hints, 0 if critical else -1)),
             GLib.VariantType("(u)"), Gio.DBusCallFlags.NONE, 5000, None)
     except GLib.Error:

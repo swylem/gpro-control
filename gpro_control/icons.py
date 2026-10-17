@@ -1,12 +1,13 @@
-"""The app's own icons.
+"""The app's icon: a mouse whose body is a battery gauge.
 
-Tray: a monochrome line-art mouse, drawn like Plasma's own 22px tray icons,
-whose body fills up with the battery level. Red when low; while charging a
-lightning bolt is cut out of the fill. App: a dark rounded tile with the
-same mouse in a cyan-to-violet glow.
+One design everywhere. The app icon (menu, window, taskbar, notifications)
+is a dark mouse with a green gauge. The tray icon is the same mouse drawn
+as panel-style line art. Its fill height is the battery percentage, and the
+colour is the state: green, amber when getting low, red when low, blue with
+a lightning bolt while charging.
 
-Everything is drawn here as SVG (original artwork, no icon pack), so the tray
-can show the live level. It's rendered to pixmaps with GdkPixbuf.
+Everything is drawn here as SVG (original artwork, no icon pack) and rendered
+with GdkPixbuf.
 """
 
 import gi
@@ -14,76 +15,83 @@ import gi
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import GdkPixbuf  # noqa: E402
 
+ICON_NAME = "io.github.gpro_control"
 TRAY_SIZES = (16, 22, 24, 32, 44, 64)
 
-LIGHT_FG = "#fcfcfc"  # on dark panels (Breeze Dark text colour)
-DARK_FG = "#232629"  # on light panels (Breeze text colour)
-LOW_RED = "#da4453"  # Breeze negative
+LIGHT_FG = "#fcfcfc"  # outline on dark panels (Breeze Dark text colour)
+DARK_FG = "#232629"  # outline on light panels (Breeze text colour)
 
-# 22x22 grid, same as Breeze tray icons.
+GREEN = "#22c55e"
+AMBER = "#f59e0b"
+RED = "#ef4444"
+BLUE = "#3b82f6"  # charging
+
+
+def state_color(percent, charging=False):
+    if charging:
+        return BLUE
+    if percent < 20:
+        return RED
+    if percent < 50:
+        return AMBER
+    return GREEN
+
+
+# Tray: 22x22 grid, same as Breeze tray icons.
 _BODY = '<rect x="5.75" y="1.75" width="10.5" height="18.5" rx="5.25"'
 _INNER = '<rect x="7.5" y="3.5" width="7" height="15" rx="3.5"'
-_FILL_TOP, _FILL_BOTTOM = 9.25, 18.5  # the gauge lives below the wheel
-_BOLT = "M11.9 10 L8.9 14.6 H10.8 L10.1 17.6 L13.1 13 H11.2 Z"
+_WHEEL = '<path d="M11 5 V7.5" stroke-linecap="round"'
+_FILL_TOP, _FILL_BOTTOM = 3.5, 18.5  # 100% fills the whole body, wheel included
+_BOLT = "M11.9 8.6 L8.7 13.6 H10.8 L10.1 17.2 L13.3 12.2 H11.2 Z"
 
 
 def tray_svg(percent=None, charging=False, fg=LIGHT_FG):
     """Tray icon; `percent` None means no reading (dimmed outline)."""
-    out = [
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22">',
-        "<defs>",
-        f'<clipPath id="inner">{_INNER}/></clipPath>',
-        f'<mask id="bolt" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">'
-        f'<rect width="22" height="22" fill="#fff"/><path d="{_BOLT}" fill="#000" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></mask>',
-        "</defs>",
-    ]
     if percent is None:
-        out.append(f'<g opacity="0.5">{_BODY} fill="none" stroke="{fg}" stroke-width="1.5"/>'
-                   f'<path d="M11 5 V7.5" stroke="{fg}" stroke-width="1.5" stroke-linecap="round"/></g>')
-        out.append("</svg>")
-        return "".join(out)
-
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22"><g opacity="0.5">'
+            f'{_BODY} fill="none" stroke="{fg}" stroke-width="1.5"/>{_WHEEL} stroke="{fg}" stroke-width="1.5"/>'
+            "</g></svg>"
+        )
     level = max(0, min(100, percent))
     top = _FILL_BOTTOM - (_FILL_BOTTOM - _FILL_TOP) * level / 100
-    color = LOW_RED if level < 20 and not charging else fg
-    mask = ' mask="url(#bolt)"' if charging else ""
-    out += [
+    color = state_color(level, charging)
+    out = [
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22">',
+        f'<defs><clipPath id="inner">{_INNER}/></clipPath>'
+        '<mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="22" height="22">'
+        '<rect width="22" height="22" fill="#fff"/>'
+        f'{_WHEEL} stroke="#000" stroke-width="3"/>'  # keep the wheel readable over the fill
+        + (f'<path d="{_BOLT}" fill="#000" stroke="#000" stroke-width="1.4" stroke-linejoin="round"/>' if charging else "")
+        + "</mask></defs>",
+        f'<g clip-path="url(#inner)" mask="url(#cut)"><rect x="0" y="{top:.2f}" width="22" height="22" fill="{color}"/></g>',
         f'{_BODY} fill="none" stroke="{fg}" stroke-width="1.5"/>',
-        f'<path d="M11 5 V7.5" stroke="{fg}" stroke-width="1.5" stroke-linecap="round"/>',
-        f'<g clip-path="url(#inner)"{mask}><rect x="0" y="{top:.2f}" width="22" height="22" fill="{color}"/></g>',
+        f'{_WHEEL} stroke="{fg}" stroke-width="1.5"/>',
     ]
     if charging:
-        # The part of the bolt above the fill line is drawn solid, so the bolt
-        # reads at any level: a hole in the fill, a shape above it.
-        out.append(f'<g clip-path="url(#inner)"><clipPath id="above"><rect width="22" height="{top:.2f}"/></clipPath>'
-                   f'<path d="{_BOLT}" fill="{fg}" clip-path="url(#above)"/></g>')
+        out.append(f'<path d="{_BOLT}" fill="{fg}"/>')
     out.append("</svg>")
     return "".join(out)
 
 
 def app_svg():
-    """App icon for the menu, window and notifications (128px grid)."""
+    """App icon (128px grid): a dark mouse with a green battery gauge.
+    Dark body with a light rim reads on light and dark menus alike."""
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">'
         "<defs>"
-        '<linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">'
-        '<stop offset="0" stop-color="#2b3140"/><stop offset="1" stop-color="#12151c"/></linearGradient>'
-        '<linearGradient id="glow" x1="0" y1="1" x2="0.4" y2="0">'
-        '<stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>'
-        '<linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">'
-        '<stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/><stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/></linearGradient>'
-        '<clipPath id="inner"><rect x="50" y="34" width="28" height="60" rx="14"/></clipPath>'
-        '<filter id="blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6"/></filter>'
+        '<linearGradient id="body" x1="0" y1="0" x2="0" y2="1">'
+        '<stop offset="0" stop-color="#3a4150"/><stop offset="1" stop-color="#1b1f27"/></linearGradient>'
+        '<linearGradient id="gauge" x1="0" y1="1" x2="0" y2="0">'
+        f'<stop offset="0" stop-color="#16a34a"/><stop offset="1" stop-color="{GREEN}"/></linearGradient>'
+        '<clipPath id="inner"><rect x="42" y="16" width="44" height="98" rx="22"/></clipPath>'
+        '<filter id="shadow" x="-30%" y="-20%" width="160%" height="150%">'
+        '<feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000" flood-opacity="0.35"/></filter>'
         "</defs>"
-        '<rect x="6" y="6" width="116" height="116" rx="28" fill="url(#tile)"/>'
-        '<rect x="6" y="6" width="116" height="116" rx="28" fill="url(#sheen)"/>'
-        '<rect x="6.5" y="6.5" width="115" height="115" rx="27.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>'
-        # soft glow behind the gauge
-        '<rect x="50" y="58" width="28" height="36" rx="14" fill="url(#glow)" opacity="0.55" filter="url(#blur)"/>'
-        # mouse outline, wheel, gauge
-        '<rect x="43" y="27" width="42" height="74" rx="21" fill="none" stroke="#f1f3f7" stroke-width="6"/>'
-        '<path d="M64 39 V50" stroke="#f1f3f7" stroke-width="6" stroke-linecap="round"/>'
-        '<g clip-path="url(#inner)"><rect x="40" y="60" width="48" height="40" fill="url(#glow)"/></g>'
+        '<rect x="34" y="8" width="60" height="114" rx="30" fill="url(#body)" filter="url(#shadow)"/>'
+        '<g clip-path="url(#inner)"><rect x="30" y="58" width="68" height="64" fill="url(#gauge)"/></g>'
+        '<rect x="34" y="8" width="60" height="114" rx="30" fill="none" stroke="#eef1f5" stroke-width="6"/>'
+        '<path d="M64 24 V42" stroke="#eef1f5" stroke-width="7" stroke-linecap="round"/>'
         "</svg>"
     )
 
