@@ -10,7 +10,6 @@ import math  # noqa: E402
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 from .backend import Backend, Snapshot  # noqa: E402
-from .estimate import format_duration  # noqa: E402
 
 APP_ID = "io.github.gpro_control"
 PRESETS = [400, 800, 1200, 1600, 3200]
@@ -86,9 +85,7 @@ class Window(Gtk.ApplicationWindow):
         self.level.add_offset_value("high", 50)
         self.level.add_offset_value("full", 100)
         bat.append(self.level)
-        self.time_lbl = _label("", wrap=True)
         self.extra_lbl = _label("", ["dim"])
-        bat.append(self.time_lbl)
         bat.append(self.extra_lbl)
         root.append(bat)
 
@@ -225,7 +222,6 @@ class Window(Gtk.ApplicationWindow):
             self.level.set_value(0)
         self.state_lbl.set_text(STATUS_TEXT.get(b.status, b.status.capitalize()) if b else "")
 
-        self.time_lbl.set_text(self._time_text(s))
         extra = []
         if b and b.voltage_mv:
             extra.append(f"{b.voltage_mv / 1000:.2f} V")
@@ -261,21 +257,6 @@ class Window(Gtk.ApplicationWindow):
         else:
             self.msg_lbl.set_text(s.message)
         return False
-
-    @staticmethod
-    def _time_text(s):
-        b = s.battery
-        if not b or b.percent is None:
-            return ""
-        if b.status == "full":
-            return "Ready to go"
-        if b.status == "not charging":
-            return ""
-        what = "Time to full" if b.charging else "Time left"
-        if s.time_left is None:
-            return f"{what}: measuring… (needs ~10 min and a 2% change)"
-        txt = f"{what}: ~{format_duration(s.time_left)}"
-        return txt + {"measured": "", "learned": " (from earlier use)", "rated": " (based on rated battery life)"}.get(s.time_basis, "")
 
 
 class App(Gtk.Application):

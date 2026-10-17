@@ -8,7 +8,6 @@ import time
 from dataclasses import dataclass
 
 from . import hidpp
-from .estimate import Estimator
 
 CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "gpro-control")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -41,8 +40,6 @@ class Snapshot:
     name: str = ""
     wireless: bool = False
     battery: hidpp.Battery | None = None
-    time_left: float | None = None
-    time_basis: str = ""
     dpi: hidpp.Dpi | None = None
     message: str = ""
 
@@ -53,7 +50,6 @@ class Backend(threading.Thread):
         self.on_update = on_update
         self.commands = queue.Queue()
         self.config = load_config()
-        self.estimator = Estimator()
         self.device = None
         self.snap = Snapshot()
 
@@ -87,8 +83,6 @@ class Backend(threading.Thread):
         if not dev:
             name, battery = hidpp.sysfs_battery()
             self.snap = Snapshot(permission_denied=denied, name=name or "", battery=battery)
-            if battery and battery.percent is not None:
-                self._estimate(name, battery)
             return False
 
         self.device = dev
@@ -104,23 +98,12 @@ class Backend(threading.Thread):
             self.snap.message = f"Restored {self.snap.dpi.current} DPI"
         return True
 
-    def _estimate(self, name, battery):
-        seconds, basis = self.estimator.update(battery.percent, battery.charging)
-        if seconds is None and not battery.charging:
-            seconds = self.estimator.rated_estimate(name, battery.percent)
-            basis = "rated" if seconds is not None else ""
-        if battery.status == "full":
-            seconds, basis = 0, "measured"
-        self.snap.time_left, self.snap.time_basis = seconds, basis
-
     def _read_battery(self):
         battery = self.device.read_battery()
         if battery is None:
             # Device has no HID++ battery feature we know; try the kernel's view.
             _, battery = hidpp.sysfs_battery()
         self.snap.battery = battery
-        if battery and battery.percent is not None:
-            self._estimate(self.snap.name, battery)
 
     def _handle(self, cmd, arg):
         if cmd == "restore":

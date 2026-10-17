@@ -2,7 +2,7 @@
 
 Small GTK4 app for Logitech G PRO wireless mice (G PRO Wireless, PRO X Superlight / Superlight 2 / "PRO X 2") on Arch Linux:
 
-- battery percentage, charging / on battery / full, and an estimated time left (or time to full)
+- battery percentage and charging state (charging / on battery / full), as reported by the mouse
 - change DPI (slider, exact value, or presets), optionally re-applied when the mouse reconnects
 
 It talks HID++ 2.0 directly over `/dev/hidraw*`, both over the USB cable and through the LIGHTSPEED receiver. Dependencies: `python`, `python-gobject` and `gtk4`, nothing else.
@@ -37,6 +37,5 @@ gpro-control features      # list HID++ features (debugging)
 
 ## Notes
 
-- **Time left** is an estimate. The mouse doesn't report it, so the app measures how fast the percentage changes, which takes about 10 minutes and a 2% change. It remembers the rate in `~/.local/state/gpro-control/` for next time. Until it has a measurement, it uses Logitech's rated battery life.
 - **Onboard profile vs host mode:** out of the box the mouse runs its onboard profile (the one G HUB edits), and in that mode it rejects DPI changes. When you apply a DPI, the app switches the mouse to host (software) mode. Polling rate is not affected. "Use onboard profile" (or `gpro-control onboard`) switches back and restores the profile's DPI.
 - **DPI persistence:** after a power cycle the mouse may come back on its onboard profile. While the app is open, "Restore on reconnect" sets your DPI again.
