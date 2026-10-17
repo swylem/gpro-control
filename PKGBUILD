@@ -4,6 +4,7 @@ pkgver=0.8.0
 pkgrel=1
 pkgdesc="Battery status and DPI control for Logitech G PRO wireless mice"
 arch=('any')
+url='https://github.com/swylem/gpro-control'
 license=('MIT')
 depends=('python' 'python-gobject' 'gtk4' 'librsvg')
 optdepends=('xdg-desktop-portal: tray icon follows light/dark mode'

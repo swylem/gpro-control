@@ -1,6 +1,26 @@
-# G PRO Control
+# G PRO Control: Logitech G PRO Wireless battery & DPI on Linux
 
-Small GTK4 app for Logitech G PRO wireless mice (G PRO Wireless, PRO X Superlight / Superlight 2 / "PRO X 2") on Arch Linux:
+**Check the battery and change the DPI of your Logitech G PRO Wireless, PRO X Superlight or PRO X Superlight 2 on Linux, without G HUB.** A small tray app for Arch Linux and Arch-based distros, on KDE Plasma, GNOME, Hyprland, Sway and others.
+
+![G PRO Control: battery, DPI, alerts and settings](docs/screenshot.png)
+
+The tray icon is the mouse itself. It fills with the battery level and changes colour with its state: green, amber, red when low, blue with a bolt while charging.
+
+![Tray icon states](docs/tray-states.png)
+
+## Why
+
+Logitech G HUB doesn't run on Linux, so there's no official way to see how much charge your G PRO mouse has left, get warned before it dies, or change its DPI. G PRO Control does that directly over Logitech's HID++ protocol, through the LIGHTSPEED receiver or the USB cable.
+
+If you searched for any of these, this is for you:
+
+- How do I check my Logitech G PRO Wireless / Superlight battery percentage on Linux?
+- How do I change DPI on a Logitech mouse on Linux without G HUB?
+- A Logitech G HUB alternative for Linux / Arch Linux
+- Low battery notification for a wireless mouse on Linux
+- How do I stop overcharging my mouse (charge limit reminder)?
+
+## Features
 
 - battery percentage and charging state (charging / on battery / full), as reported by the mouse
 - change DPI (slider, exact value, or presets), optionally re-applied when the mouse reconnects
@@ -10,6 +30,17 @@ Small GTK4 app for Logitech G PRO wireless mice (G PRO Wireless, PRO X Superligh
 - lives in the system tray: the icon is a mouse whose fill height is the battery percentage and whose colour is the state (green, amber below 50%, red below 20%, blue with a lightning bolt while charging). The same mouse is the app icon in the menu and taskbar, the tooltip shows battery and DPI, and left-click shows or hides the window
 - setup check (Settings page): looks at your desktop and fixes what's missing with one click each: adds the tray to Waybar, installs and enables GNOME's AppIndicator extension, installs a notification daemon (dunst), adds the startup line to Hyprland/Sway/i3/niri/river/Wayfire, or installs the mouse permission rule. Config files get a timestamped backup first. It opens by itself the first time something is missing on a desktop
 - settings: appearance (System / Light / Dark, for this window only), what closing the window does (keep running in the tray, or quit), tray icon outline, and start at login
+
+## Supported mice
+
+| Mouse | Status |
+|---|---|
+| PRO X Superlight 2 / "PRO X 2" (HERO 2, up to 44000 DPI) | Tested, wired and wireless |
+| G PRO Wireless | Should work (same HID++ battery and DPI features) |
+| PRO X Superlight | Should work |
+| Other Logitech HID++ 2.0 mice | Battery and DPI usually work; not tested |
+
+Tried it on another mouse? Open an issue with the output of `gpro-control features` and `gpro-control status`, and it can be added to the list.
 
 It talks HID++ 2.0 directly over `/dev/hidraw*`, both over the USB cable and through the LIGHTSPEED receiver. Dependencies: `python`, `python-gobject`, `gtk4` and `librsvg` (to draw the icon), nothing else.
 
@@ -29,10 +60,10 @@ Works on any Arch-based distro (Arch, CachyOS, EndeavourOS, Manjaro, Garuda, ...
 
 | Feature | Needs | Without it |
 |---|---|---|
-| Tray icon | A StatusNotifierItem tray: KDE, XFCE, LXQt, Cinnamon, Waybar's `tray` module, GNOME with the AppIndicator extension | Closing the window quits the app, so you're never left with a hidden app |
-| Alert popups | A notification daemon: built into full desktops; `mako`, `dunst` or `swaync` on window managers | Settings → Alerts → **Test** tells you none is running |
+| Tray icon | A StatusNotifierItem tray: KDE, XFCE, LXQt, Cinnamon, Waybar's `tray` module, GNOME with the AppIndicator extension | Setup check adds the tray to Waybar or enables GNOME's extension; otherwise closing the window quits the app |
+| Alert popups | A notification daemon: built into full desktops; `mako`, `dunst` or `swaync` on window managers | Setup check installs `dunst`; Alerts → **Test** tells you if none is running |
 | Background alerts | systemd user session (every systemd-based Arch distro) | Alerts run inside the app while it's open |
-| Start at login | A desktop that runs XDG autostart | The Settings page shows the line to add for Hyprland, Sway, i3, niri, river or Wayfire |
+| Start at login | A desktop that runs XDG autostart | Setup check adds the startup line to your Hyprland, Sway, i3, niri, river or Wayfire config |
 | Tray icon light/dark | `xdg-desktop-portal` | Assumes a dark bar; Settings → **Tray icon outline** lets you pick White or Black |
 
 Non-systemd Arch derivatives (e.g. Artix) are untested. The udev permission rule uses logind's `uaccess` tag, and the background alerts need systemd, so expect alerts to run only while the app is open there.
@@ -57,6 +88,11 @@ gpro-control onboard       # hand DPI back to the mouse's onboard profile
 gpro-control monitor       # run the alerts without a window
 gpro-control features      # list HID++ features (debugging)
 ```
+
+## Related tools
+
+- [Solaar](https://github.com/pwr-Solaar/Solaar) manages a wide range of Logitech devices and settings. G PRO Control does less on purpose: G PRO battery, DPI, alerts and a tray icon.
+- [Piper](https://github.com/libratbag/piper) / libratbag configure gaming mouse profiles, buttons and lighting.
 
 ## Notes
 
