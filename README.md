@@ -7,7 +7,7 @@ Small GTK4 app for Logitech G PRO wireless mice (G PRO Wireless, PRO X Superligh
 - battery alerts as desktop notifications, each with an optional heads-up before it:
   - **Low battery**: on battery and the level drops to X% (default 20%, heads-up at 30%)
   - **Charge limit**: charging and the level reaches X% (default 80%, heads-up at 75%), so you can unplug
-- lives in the system tray: the icon is a mouse that fills up with the battery level (green/amber/red, with a bolt while charging), the tooltip shows battery and DPI, and left-click shows or hides the window
+- lives in the system tray: the icon is a line-art mouse in the panel's own style that fills up with the battery level (red when low, a lightning bolt while charging, light or dark to match your theme), the tooltip shows battery and DPI, and left-click shows or hides the window
 - settings: what closing the window does (keep running in the tray, or quit), and start at login
 
 It talks HID++ 2.0 directly over `/dev/hidraw*`, both over the USB cable and through the LIGHTSPEED receiver. Dependencies: `python`, `python-gobject`, `gtk4` and `librsvg` (to draw the icon), nothing else.

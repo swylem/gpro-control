@@ -443,6 +443,8 @@ class App(Gtk.Application):
         self.start_hidden = hidden
         self.window = None
         self.tray = None
+        self.tray_fg = icons.LIGHT_FG
+        self._last_snapshot = None
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
@@ -457,7 +459,8 @@ class App(Gtk.Application):
 
         try:
             self.tray = TrayIcon(APP_ID, "G PRO Control", self._on_tray_click, self._on_tray_available)
-            self.tray.set_icon_pixmaps(None, icons.tray_pixmaps(None))
+            self._watch_color_scheme()
+            self.tray.set_icon_pixmaps(None, icons.tray_pixmaps(None, fg=self.tray_fg))
         except GLib.Error:
             self.tray = None
         Gtk.Window.set_default_icon_name("gpro-control")
@@ -477,6 +480,34 @@ class App(Gtk.Application):
                 GLib.timeout_add_seconds(3, self._show_if_no_tray)
                 return
         self.window.present()
+
+    # The tray icon is monochrome like the rest of the panel: light lines on a
+    # dark theme, dark lines on a light one. Follow the desktop's setting live.
+    PORTAL = ("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings")
+
+    def _watch_color_scheme(self):
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        try:
+            reply = bus.call_sync(*self.PORTAL, "ReadOne", GLib.Variant("(ss)", ("org.freedesktop.appearance", "color-scheme")),
+                                  None, Gio.DBusCallFlags.NONE, 2000, None)
+            self._set_color_scheme(reply.unpack()[0])
+        except GLib.Error:
+            pass
+        bus.signal_subscribe(self.PORTAL[0], self.PORTAL[2], "SettingChanged", self.PORTAL[1], None,
+                             Gio.DBusSignalFlags.NONE, self._on_setting_changed)
+
+    def _on_setting_changed(self, _conn, _sender, _path, _iface, _signal, params):
+        namespace, key, value = params.unpack()
+        if (namespace, key) == ("org.freedesktop.appearance", "color-scheme"):
+            self._set_color_scheme(value)
+            if self._last_snapshot:
+                self.update_tray(self._last_snapshot)
+            else:
+                self.tray.set_icon_pixmaps(("none", self.tray_fg), icons.tray_pixmaps(None, fg=self.tray_fg))
+
+    def _set_color_scheme(self, value):
+        # 1 = prefer dark, 2 = prefer light, 0 = no preference (treat as dark: Breeze Dark panels are common).
+        self.tray_fg = icons.DARK_FG if value == 2 else icons.LIGHT_FG
 
     def tray_available(self):
         return bool(self.tray and self.tray.available)
@@ -503,15 +534,16 @@ class App(Gtk.Application):
     def update_tray(self, s):
         if not self.tray:
             return
+        self._last_snapshot = s
         b, title = s.battery, s.name or "G PRO Control"
         lines = []
         if b and b.percent is not None:
-            key = (b.percent, b.charging)
+            key = (b.percent, b.charging, self.tray_fg)
             self.tray.set_icon_pixmaps(key, icons.tray_pixmaps(*key))
             battery_text = f"{b.percent}% · {STATUS_TEXT.get(b.status, b.status)}"
             lines.append(battery_text)
         else:
-            self.tray.set_icon_pixmaps(None, icons.tray_pixmaps(None))
+            self.tray.set_icon_pixmaps(("none", self.tray_fg), icons.tray_pixmaps(None, fg=self.tray_fg))
             battery_text = "not available"
         if s.dpi:
             lines.append(f"{s.dpi.current} DPI")

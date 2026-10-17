@@ -1,6 +1,6 @@
 # Local package: build with `makepkg -si` from this directory.
 pkgname=gpro-control
-pkgver=0.4.0
+pkgver=0.4.1
 pkgrel=1
 pkgdesc="Battery status and DPI control for Logitech G PRO wireless mice"
 arch=('any')
