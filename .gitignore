@@ -1,0 +1,7 @@
+# makepkg output
+/pkg/
+/src/
+*.pkg.tar.*
+
+__pycache__/
+*.pyc

@@ -1,0 +1,4 @@
+# Let the logged-in user talk HID++ to Logitech mice and receivers
+# (needed by gpro-control to change DPI and read battery details).
+ACTION!="remove", SUBSYSTEM=="hidraw", KERNELS=="0003:046D:*", TAG+="uaccess"
+ACTION!="remove", SUBSYSTEM=="hidraw", KERNELS=="0005:046D:*", TAG+="uaccess"

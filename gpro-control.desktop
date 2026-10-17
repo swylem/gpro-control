@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=G PRO Control
+Comment=Battery status and DPI for Logitech G PRO mice
+Exec=gpro-control
+Icon=input-mouse
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=logitech;mouse;dpi;battery;
+StartupWMClass=io.github.gpro_control

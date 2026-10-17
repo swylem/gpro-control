@@ -1,0 +1,9 @@
+#!/bin/sh
+# Runs from the source tree, or from /usr/lib/gpro-control when installed.
+here="$(dirname "$(readlink -f "$0")")"
+if [ -d "$here/gpro_control" ]; then
+    export PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}"
+else
+    export PYTHONPATH="/usr/lib/gpro-control${PYTHONPATH:+:$PYTHONPATH}"
+fi
+exec python3 -m gpro_control "$@"
