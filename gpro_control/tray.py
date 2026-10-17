@@ -21,6 +21,7 @@ SNI_XML = """
     <property name="Status" type="s" access="read"/>
     <property name="WindowId" type="i" access="read"/>
     <property name="IconName" type="s" access="read"/>
+    <property name="IconPixmap" type="a(iiay)" access="read"/>
     <property name="IconThemePath" type="s" access="read"/>
     <property name="OverlayIconName" type="s" access="read"/>
     <property name="AttentionIconName" type="s" access="read"/>
@@ -125,6 +126,8 @@ class TrayIcon:
         self.on_activate = on_activate
         self.on_available_changed = on_available_changed
         self.icon_name = "input-mouse"
+        self.icon_pixmaps = []  # [(w, h, argb32)]; used instead of icon_name when set
+        self._icon_key = None
         self.tooltip = (title, "")
         self.items = []  # menu item ids are list index + 1; 0 is the root
         self.revision = 1
@@ -146,8 +149,17 @@ class TrayIcon:
     # -- public -----------------------------------------------------------
 
     def set_icon(self, icon_name):
-        if icon_name != self.icon_name:
-            self.icon_name = icon_name
+        self._set_icon(("name", icon_name), icon_name, [])
+
+    def set_icon_pixmaps(self, key, pixmaps):
+        """Show rendered images; `key` identifies them so unchanged icons aren't resent."""
+        # Hosts prefer IconName over IconPixmap, so clear the name.
+        self._set_icon(("pixmaps", key), "", pixmaps)
+
+    def _set_icon(self, key, icon_name, pixmaps):
+        if key != self._icon_key:
+            self._icon_key = key
+            self.icon_name, self.icon_pixmaps = icon_name, pixmaps
             self._emit(ITEM_PATH, "org.kde.StatusNotifierItem", "NewIcon")
 
     def set_tooltip(self, title, body=""):
@@ -208,6 +220,7 @@ class TrayIcon:
             "Status": GLib.Variant("s", "Active"),
             "WindowId": GLib.Variant("i", 0),
             "IconName": GLib.Variant("s", self.icon_name),
+            "IconPixmap": GLib.Variant("a(iiay)", self.icon_pixmaps),
             "IconThemePath": GLib.Variant("s", ""),
             "OverlayIconName": GLib.Variant("s", ""),
             "AttentionIconName": GLib.Variant("s", ""),

@@ -13,6 +13,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from .alerts import notify  # noqa: E402
 from .backend import Backend, Snapshot  # noqa: E402
+from . import icons  # noqa: E402
 from .config import CONFIG_DIR, alert_settings  # noqa: E402
 from .tray import MenuItem, TrayIcon  # noqa: E402
 
@@ -235,7 +236,7 @@ class Window(Gtk.ApplicationWindow):
         os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
         with open(AUTOSTART_FILE, "w") as f:
             f.write("[Desktop Entry]\nType=Application\nName=G PRO Control\n"
-                    f"Exec={exe} --hidden\nIcon=input-mouse\nX-GNOME-Autostart-enabled=true\n")
+                    f"Exec={exe} --hidden\nIcon=gpro-control\nX-GNOME-Autostart-enabled=true\n")
 
     # -- alerts -------------------------------------------------------------
 
@@ -456,8 +457,10 @@ class App(Gtk.Application):
 
         try:
             self.tray = TrayIcon(APP_ID, "G PRO Control", self._on_tray_click, self._on_tray_available)
+            self.tray.set_icon_pixmaps(None, icons.tray_pixmaps(None))
         except GLib.Error:
             self.tray = None
+        Gtk.Window.set_default_icon_name("gpro-control")
         self.hold()  # keep running while the window is hidden in the tray
 
     def do_shutdown(self):
@@ -503,12 +506,12 @@ class App(Gtk.Application):
         b, title = s.battery, s.name or "G PRO Control"
         lines = []
         if b and b.percent is not None:
-            level = min(100, max(0, round(b.percent / 10) * 10))
-            self.tray.set_icon(f"battery-{level:03d}{'-charging' if b.charging else ''}")
+            key = (b.percent, b.charging)
+            self.tray.set_icon_pixmaps(key, icons.tray_pixmaps(*key))
             battery_text = f"{b.percent}% · {STATUS_TEXT.get(b.status, b.status)}"
             lines.append(battery_text)
         else:
-            self.tray.set_icon("input-mouse")
+            self.tray.set_icon_pixmaps(None, icons.tray_pixmaps(None))
             battery_text = "not available"
         if s.dpi:
             lines.append(f"{s.dpi.current} DPI")

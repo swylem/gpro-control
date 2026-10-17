@@ -7,10 +7,10 @@ Small GTK4 app for Logitech G PRO wireless mice (G PRO Wireless, PRO X Superligh
 - battery alerts as desktop notifications, each with an optional heads-up before it:
   - **Low battery**: on battery and the level drops to X% (default 20%, heads-up at 30%)
   - **Charge limit**: charging and the level reaches X% (default 80%, heads-up at 75%), so you can unplug
-- lives in the system tray: the icon shows the battery level, the tooltip shows battery and DPI, and left-click shows or hides the window
+- lives in the system tray: the icon is a mouse that fills up with the battery level (green/amber/red, with a bolt while charging), the tooltip shows battery and DPI, and left-click shows or hides the window
 - settings: what closing the window does (keep running in the tray, or quit), and start at login
 
-It talks HID++ 2.0 directly over `/dev/hidraw*`, both over the USB cable and through the LIGHTSPEED receiver. Dependencies: `python`, `python-gobject` and `gtk4`, nothing else.
+It talks HID++ 2.0 directly over `/dev/hidraw*`, both over the USB cable and through the LIGHTSPEED receiver. Dependencies: `python`, `python-gobject`, `gtk4` and `librsvg` (to draw the icon), nothing else.
 
 ## Install (Arch)
 
@@ -50,3 +50,4 @@ gpro-control features      # list HID++ features (debugging)
 - **Alerts run in the background.** When any alert is on, the app enables `gpro-control-monitor.service` (a systemd user service), which checks the battery every 30 seconds, even with the window closed. Turning every alert off disables it again. Each alert fires once, then re-arms when you plug in (low battery) or unplug (charge limit).
 - **Why an alert and not a real charge limit?** The mouse handles charging in its own firmware, and HID++ has no command to stop charging at a set level. Desktop USB ports generally can't switch off their 5 V power from software either. So the charge limit is a reminder to unplug.
 - **Tray:** closing the window keeps the app in the tray by default. Quit from the tray menu, with Settings → "Quit G PRO Control", or with Ctrl+Q. If no system tray is running, closing the window always quits, so the app is never left running with no way back in. The tray uses the StatusNotifierItem protocol: KDE Plasma supports it out of the box, and GNOME needs the AppIndicator extension.
+- **Icon:** the mouse icon is original artwork drawn in `gpro_control/icons.py` and released under the same MIT license. It isn't affiliated with Logitech and doesn't use Logitech's logo.

@@ -31,7 +31,7 @@ def notify(key, summary, body, critical=False):
         reply = bus.call_sync(
             "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
             "org.freedesktop.Notifications", "Notify",
-            GLib.Variant("(susssasa{sv}i)", ("G PRO Control", _notification_ids.get(key, 0), "input-mouse",
+            GLib.Variant("(susssasa{sv}i)", ("G PRO Control", _notification_ids.get(key, 0), "gpro-control",
                                              summary, body, [], hints, 0 if critical else -1)),
             GLib.VariantType("(u)"), Gio.DBusCallFlags.NONE, 5000, None)
     except GLib.Error:
