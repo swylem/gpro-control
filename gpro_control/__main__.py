@@ -4,6 +4,7 @@
   gpro-control status          print battery and DPI
   gpro-control dpi 1600        set DPI (switches the mouse to host mode)
   gpro-control onboard         hand control back to the mouse's onboard profile
+  gpro-control monitor         run the battery alerts without a window (systemd service)
   gpro-control features        list HID++ features (debugging)
 """
 
@@ -63,6 +64,12 @@ def cli(args):
             sys.exit("This device has no onboard profiles.")
         dev.set_onboard_mode(True)
         print(f"onboard profile active, dpi: {dev.read_dpi().current}")
+        return 0
+
+    if cmd == "monitor":
+        from .alerts import run_monitor
+
+        run_monitor()
         return 0
 
     if cmd == "features":

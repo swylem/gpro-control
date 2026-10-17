@@ -1,36 +1,24 @@
 """Background worker that owns the mouse and talks to it off the UI thread."""
 
-import json
-import os
 import queue
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
 
 from . import hidpp
-
-CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "gpro-control")
-CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+from .alerts import SERVICE, AlertMonitor
+from .config import alert_settings, load_config, save_config
 
 BATTERY_INTERVAL = 20  # seconds between battery reads
 SCAN_INTERVAL = 3  # seconds between scans while no mouse is found
 
 
-def load_config():
+def _systemctl(*args):
     try:
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
-
-
-def save_config(cfg):
-    try:
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(cfg, f, indent=2)
-    except OSError:
-        pass
+        return subprocess.run(["systemctl", "--user", *args], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 @dataclass
@@ -42,6 +30,7 @@ class Snapshot:
     battery: hidpp.Battery | None = None
     dpi: hidpp.Dpi | None = None
     message: str = ""
+    alert_mode: str = ""  # "service": background service, "window": only while open, "off"
 
 
 class Backend(threading.Thread):
@@ -52,6 +41,11 @@ class Backend(threading.Thread):
         self.config = load_config()
         self.device = None
         self.snap = Snapshot()
+        # Installed package: alerts run in the background service. From a
+        # source checkout there is no unit, so the window checks them itself.
+        self.has_service = _systemctl("cat", SERVICE)
+        self.window_alerts = AlertMonitor()
+        self._service_lock = threading.Lock()
 
     # -- called from the UI thread ----------------------------------------
 
@@ -64,13 +58,40 @@ class Backend(threading.Thread):
     def use_onboard_profile(self):
         self.commands.put(("onboard", None))
 
+    def set_alerts(self, settings):
+        self.commands.put(("alerts", settings))
+
     def refresh(self):
         self.commands.put(("refresh", None))
 
     # -- worker -------------------------------------------------------------
 
     def _publish(self):
+        self.snap.alert_mode = self._alert_mode()
         self.on_update(Snapshot(**vars(self.snap)))
+
+    def _alert_mode(self):
+        settings = alert_settings(self.config)
+        if not any(a["enabled"] for a in settings.values()):
+            return "off"
+        return "service" if self.has_service else "window"
+
+    def _sync_service(self):
+        # systemctl can take a few seconds; don't hold up talking to the mouse.
+        if self.has_service:
+            threading.Thread(target=self._sync_service_now, args=(self._alert_mode(),), daemon=True).start()
+
+    def _sync_service_now(self, mode):
+        with self._service_lock:
+            if mode == "service":
+                _systemctl("enable", "--now", SERVICE)
+                _systemctl("try-restart", SERVICE)  # pick up a newly installed version
+            else:
+                _systemctl("disable", "--now", SERVICE)
+
+    def _check_alerts(self):
+        if self._alert_mode() == "window":
+            self.window_alerts.check(self.snap.battery, self.snap.name, self.config)
 
     def _drop_device(self, message=""):
         if self.device:
@@ -83,6 +104,7 @@ class Backend(threading.Thread):
         if not dev:
             name, battery = hidpp.sysfs_battery()
             self.snap = Snapshot(permission_denied=denied, name=name or "", battery=battery)
+            self._check_alerts()
             return False
 
         self.device = dev
@@ -104,6 +126,7 @@ class Backend(threading.Thread):
             # Device has no HID++ battery feature we know; try the kernel's view.
             _, battery = hidpp.sysfs_battery()
         self.snap.battery = battery
+        self._check_alerts()
 
     def _handle(self, cmd, arg):
         if cmd == "restore":
@@ -111,6 +134,11 @@ class Backend(threading.Thread):
             save_config(self.config)
             return
         if cmd == "refresh":
+            return
+        if cmd == "alerts":
+            self.config["alerts"] = arg
+            save_config(self.config)
+            self._sync_service()
             return
         if cmd == "onboard" and self.device:
             self.device.set_onboard_mode(True)
@@ -127,6 +155,7 @@ class Backend(threading.Thread):
             self.snap.message = f"DPI set to {self.config['dpi']}"
 
     def run(self):
+        self._sync_service()
         next_battery = 0
         while True:
             try:

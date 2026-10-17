@@ -9,7 +9,9 @@ import math  # noqa: E402
 
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
+from .alerts import notify  # noqa: E402
 from .backend import Backend, Snapshot  # noqa: E402
+from .config import alert_settings  # noqa: E402
 
 APP_ID = "io.github.gpro_control"
 PRESETS = [400, 800, 1200, 1600, 3200]
@@ -30,6 +32,12 @@ STATUS_TEXT = {
     "not charging": "Plugged in, not charging",
     "error": "Battery error",
     "unknown": "Unknown",
+}
+
+ALERT_MODE_TEXT = {
+    "service": "Alerts run in the background, even with this window closed.",
+    "window": "Alerts only work while this window is open (install the package for background alerts).",
+    "off": "All alerts are off.",
 }
 
 UDEV_HINT = (
@@ -130,12 +138,87 @@ class Window(Gtk.ApplicationWindow):
         root.append(self.dpi_card)
 
         self.msg_lbl = _label("", ["dim"], wrap=True)
-        root.append(self.msg_lbl)
 
         self.backend = Backend(lambda snap: GLib.idle_add(self._update, snap))
+        root.append(self._build_alerts(alert_settings(self.backend.config)))
+        root.append(self.msg_lbl)
         self.restore_chk.set_active(self.backend.config.get("restore", True))
         self.restore_chk.connect("toggled", lambda b: self.backend.set_restore(b.get_active()))
         self.backend.start()
+
+    # -- alerts -------------------------------------------------------------
+
+    def _build_alerts(self, settings):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, css_classes=["card"])
+        card.append(_label("Alerts", ["section"]))
+        grid = Gtk.Grid(column_spacing=8, row_spacing=6)
+        card.append(grid)
+        self.alert_widgets = {}
+        self._alerts_timer = 0
+
+        rows = [
+            ("low", "Low battery", "Alert when the battery drops to this level while unplugged", 5, 50),
+            ("charge", "Charge limit", "Alert when charging reaches this level, so you can unplug", 50, 100),
+        ]
+        for n, (kind, title, tip, lo, hi) in enumerate(rows):
+            s = settings[kind]
+            on = Gtk.CheckButton(label=title, active=s["enabled"], hexpand=True, tooltip_text=tip)
+            at = Gtk.SpinButton.new_with_range(lo, hi, 1)
+            at.set_value(s["at"])
+            early = Gtk.CheckButton(label="Heads-up first at", active=s["early"], margin_start=24,
+                                    tooltip_text="One earlier reminder before the real alert")
+            early_at = Gtk.SpinButton.new_with_range(1, 100, 1)
+            early_at.set_value(s["early_at"])
+
+            grid.attach(on, 0, n * 2, 1, 1)
+            grid.attach(at, 1, n * 2, 1, 1)
+            grid.attach(_label("%"), 2, n * 2, 1, 1)
+            grid.attach(early, 0, n * 2 + 1, 1, 1)
+            grid.attach(early_at, 1, n * 2 + 1, 1, 1)
+            grid.attach(_label("%"), 2, n * 2 + 1, 1, 1)
+
+            self.alert_widgets[kind] = (on, at, early, early_at)
+            for w in (on, early):
+                w.connect("toggled", self._on_alert_changed)
+            for w in (at, early_at):
+                w.connect("value-changed", self._on_alert_changed)
+        self._constrain_alerts()
+
+        foot = Gtk.Box(spacing=8)
+        self.alert_mode_lbl = _label("", ["dim"], hexpand=True, wrap=True)
+        foot.append(self.alert_mode_lbl)
+        test = Gtk.Button(label="Test", tooltip_text="Send a test notification")
+        test.connect("clicked", lambda *_: notify("test", "G PRO Control", "Notifications are working."))
+        foot.append(test)
+        card.append(foot)
+        return card
+
+    def _constrain_alerts(self):
+        # A heads-up has to come before the alert: above the low level, below the charge limit.
+        for kind, (on, at, early, early_at) in self.alert_widgets.items():
+            if kind == "low":
+                early_at.set_range(at.get_value() + 1, 99)
+            else:
+                early_at.set_range(1, at.get_value() - 1)
+            early.set_sensitive(on.get_active())
+            early_at.set_sensitive(on.get_active() and early.get_active())
+            at.set_sensitive(on.get_active())
+
+    def _on_alert_changed(self, *_):
+        self._constrain_alerts()
+        # Save shortly after the last change rather than on every spin click.
+        if self._alerts_timer:
+            GLib.source_remove(self._alerts_timer)
+        self._alerts_timer = GLib.timeout_add(600, self._save_alerts)
+
+    def _save_alerts(self):
+        self._alerts_timer = 0
+        self.backend.set_alerts({
+            kind: {"enabled": on.get_active(), "at": int(at.get_value()),
+                   "early": early.get_active(), "early_at": int(early_at.get_value())}
+            for kind, (on, at, early, early_at) in self.alert_widgets.items()
+        })
+        return False
 
     # -- DPI widgets ------------------------------------------------------
 
@@ -249,6 +332,8 @@ class Window(Gtk.ApplicationWindow):
             self.onboard_btn.set_visible(dpi.onboard is False)
         else:
             self.cur_dpi_lbl.set_text("")
+
+        self.alert_mode_lbl.set_text(ALERT_MODE_TEXT.get(s.alert_mode, ""))
 
         if s.permission_denied:
             self.msg_lbl.set_text(UDEV_HINT)

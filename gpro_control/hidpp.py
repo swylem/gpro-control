@@ -8,6 +8,7 @@ receiver (device index 1..6).
 
 import glob
 import os
+import re
 import select
 import struct
 import time
@@ -97,6 +98,11 @@ def find_hidpp_nodes():
         except (KeyError, ValueError):
             continue
         if vid != LOGITECH_VID or not _has_hidpp_reports(descriptor):
+            continue
+        if re.search(r"/input\d+:\d+$", info.get("HID_PHYS", "")):
+            # Per-device node made by the receiver driver (logitech-dj): the
+            # same mouse is reachable through the receiver node, and probing
+            # this one only costs timeouts.
             continue
         nodes.append(HidrawNode("/dev/" + os.path.basename(sys_path), bus, pid, info.get("HID_NAME", "")))
     return nodes
@@ -407,7 +413,8 @@ def open_devices():
         else:
             # Probably a receiver: look for paired devices that are online.
             for slot in RECEIVER_SLOTS:
-                proto = _probe(fd, slot, 0.4)
+                # A sleeping mouse can take ~0.5 s to answer; empty slots fail fast.
+                proto = _probe(fd, slot, 1.5)
                 if proto and proto[0] >= 2:
                     found.append(Device(node, fd, slot, proto))
 

@@ -4,6 +4,9 @@ Small GTK4 app for Logitech G PRO wireless mice (G PRO Wireless, PRO X Superligh
 
 - battery percentage and charging state (charging / on battery / full), as reported by the mouse
 - change DPI (slider, exact value, or presets), optionally re-applied when the mouse reconnects
+- battery alerts as desktop notifications, each with an optional heads-up before it:
+  - **Low battery**: on battery and the level drops to X% (default 20%, heads-up at 30%)
+  - **Charge limit**: charging and the level reaches X% (default 80%, heads-up at 75%), so you can unplug
 
 It talks HID++ 2.0 directly over `/dev/hidraw*`, both over the USB cable and through the LIGHTSPEED receiver. Dependencies: `python`, `python-gobject` and `gtk4`, nothing else.
 
@@ -15,7 +18,7 @@ cd gpro-control
 makepkg -si
 ```
 
-This installs `/usr/bin/gpro-control`, a menu entry, and a udev rule that gives your logged-in user access to Logitech HID devices. After installing, unplug and replug the mouse or receiver once (or run `sudo udevadm trigger`).
+This installs `/usr/bin/gpro-control`, a menu entry, a systemd user service for the alerts, and a udev rule that gives your logged-in user access to Logitech HID devices. After installing, unplug and replug the mouse or receiver once (or run `sudo udevadm trigger`).
 
 ## Run from source
 
@@ -32,6 +35,8 @@ Without the udev rule the app still shows the battery (it reads it from the kern
 ```
 gpro-control status        # battery + DPI
 gpro-control dpi 1600      # set DPI
+gpro-control onboard       # hand DPI back to the mouse's onboard profile
+gpro-control monitor       # run the alerts without a window
 gpro-control features      # list HID++ features (debugging)
 ```
 
@@ -39,3 +44,5 @@ gpro-control features      # list HID++ features (debugging)
 
 - **Onboard profile vs host mode:** out of the box the mouse runs its onboard profile (the one G HUB edits), and in that mode it rejects DPI changes. When you apply a DPI, the app switches the mouse to host (software) mode. Polling rate is not affected. "Use onboard profile" (or `gpro-control onboard`) switches back and restores the profile's DPI.
 - **DPI persistence:** after a power cycle the mouse may come back on its onboard profile. While the app is open, "Restore on reconnect" sets your DPI again.
+- **Alerts run in the background.** When any alert is on, the app enables `gpro-control-monitor.service` (a systemd user service), which checks the battery every 30 seconds, even with the window closed. Turning every alert off disables it again. Each alert fires once, then re-arms when you plug in (low battery) or unplug (charge limit).
+- **Why an alert and not a real charge limit?** The mouse handles charging in its own firmware, and HID++ has no command to stop charging at a set level. Desktop USB ports generally can't switch off their 5 V power from software either. So the charge limit is a reminder to unplug.
