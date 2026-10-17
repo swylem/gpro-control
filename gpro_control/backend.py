@@ -87,7 +87,9 @@ class Backend(threading.Thread):
     def _sync_service_now(self, mode):
         with self._service_lock:
             if mode == "service":
-                _systemctl("enable", "--now", SERVICE)
+                # reenable also drops links from older versions' install targets.
+                _systemctl("reenable", SERVICE)
+                _systemctl("start", SERVICE)
                 _systemctl("try-restart", SERVICE)  # pick up a newly installed version
             else:
                 _systemctl("disable", "--now", SERVICE)

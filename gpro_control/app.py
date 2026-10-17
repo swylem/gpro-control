@@ -14,7 +14,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 from .alerts import notify  # noqa: E402
 from .backend import Backend, Snapshot  # noqa: E402
 from . import icons  # noqa: E402
-from .config import CONFIG_DIR, alert_settings  # noqa: E402
+from .config import CONFIG_DIR, alert_settings, load_config  # noqa: E402
 from .tray import MenuItem, TrayIcon  # noqa: E402
 
 APP_ID = "io.github.gpro_control"
@@ -45,6 +45,33 @@ ALERT_MODE_TEXT = {
 }
 
 CLOSE_ACTIONS = [("tray", "Keep running in the tray"), ("quit", "Quit G PRO Control")]
+TRAY_OUTLINES = [("auto", "Match system"), ("light", "White"), ("dark", "Black")]
+
+# Desktops that run ~/.config/autostart entries at login. Bare compositors and
+# window managers usually don't (unless started through uwsm or dex).
+XDG_AUTOSTART_DESKTOPS = {"kde", "gnome", "xfce", "lxqt", "lxde", "mate", "cinnamon", "x-cinnamon", "budgie",
+                          "deepin", "pantheon", "unity", "cosmic", "enlightenment", "trinity"}
+
+AUTOSTART_HINTS = {
+    "hyprland": "exec-once = gpro-control --hidden",
+    "sway": "exec gpro-control --hidden",
+    "i3": "exec --no-startup-id gpro-control --hidden",
+    "niri": 'spawn-at-startup "gpro-control" "--hidden"',
+    "river": "riverctl spawn 'gpro-control --hidden'",
+    "wayfire": "autostart: gpro = gpro-control --hidden",
+}
+
+
+def autostart_hint():
+    """A note for desktops that ignore XDG autostart, or None."""
+    names = [d for d in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":") if d]
+    desktops = [d.lower() for d in names]
+    if any(d in XDG_AUTOSTART_DESKTOPS or d.startswith("budgie") for d in desktops) or os.environ.get("UWSM_FINALIZE_VARNAMES"):
+        return None
+    line = AUTOSTART_HINTS.get(desktops[0] if desktops else "", "gpro-control --hidden")
+    return (f"{names[0] if names else 'Your desktop'} may not run login apps by itself. "
+            f"If the app doesn't start at login, add this to its startup config:\n{line}")
+
 
 AUTOSTART_FILE = os.path.join(os.path.dirname(CONFIG_DIR), "autostart", "gpro-control.desktop")
 
@@ -201,9 +228,23 @@ class Window(Gtk.ApplicationWindow):
         row.append(self.close_dd)
         card.append(row)
 
+        row = Gtk.Box(spacing=8)
+        row.append(_label("Tray icon outline", hexpand=True,
+                          tooltip_text="Match system follows light/dark mode. Pick one if your panel or bar doesn't follow it."))
+        outline_dd = Gtk.DropDown.new_from_strings([text for _, text in TRAY_OUTLINES])
+        outline_keys = [key for key, _ in TRAY_OUTLINES]
+        outline_dd.set_selected(outline_keys.index(self.settings.get("tray_outline", "auto")))
+        outline_dd.connect("notify::selected", lambda dd, _p: self._set_outline(outline_keys[dd.get_selected()]))
+        row.append(outline_dd)
+        card.append(row)
+
         self.autostart_chk = Gtk.CheckButton(label="Start at login (in the tray)", active=os.path.exists(AUTOSTART_FILE))
         self.autostart_chk.connect("toggled", lambda b: self._set_autostart(b.get_active()))
         card.append(self.autostart_chk)
+
+        hint = autostart_hint()
+        if hint:
+            card.append(_label(hint, ["dim"], wrap=True, selectable=True))
 
         self.tray_note = _label("", ["dim"], wrap=True)
         card.append(self.tray_note)
@@ -218,7 +259,12 @@ class Window(Gtk.ApplicationWindow):
         if self.get_application().tray_available():
             self.tray_note.set_text("Quit from the tray icon's menu, this button, or Ctrl+Q.")
         else:
-            self.tray_note.set_text("No system tray found, so closing the window quits the app.")
+            self.tray_note.set_text("No system tray found, so closing the window quits the app. "
+                                    "Waybar: enable its \"tray\" module. GNOME: install the AppIndicator extension.")
+
+    def _set_outline(self, value):
+        self._set_setting("tray_outline", value)
+        self.get_application().set_tray_outline(value)
 
     def _set_setting(self, key, value):
         self.settings[key] = value
@@ -280,10 +326,17 @@ class Window(Gtk.ApplicationWindow):
         self.alert_mode_lbl = _label("", ["dim"], hexpand=True, wrap=True)
         foot.append(self.alert_mode_lbl)
         test = Gtk.Button(label="Test", tooltip_text="Send a test notification")
-        test.connect("clicked", lambda *_: notify("test", "G PRO Control", "Notifications are working."))
+        test.connect("clicked", lambda *_: self._test_notification())
         foot.append(test)
         card.append(foot)
         return card
+
+    def _test_notification(self):
+        if notify("test", "G PRO Control", "Notifications are working."):
+            self.msg_lbl.set_text("Test notification sent.")
+        else:
+            self.msg_lbl.set_text("No notification service is running, so alerts can't be shown. "
+                                  "Install one, e.g. mako, dunst or swaync.")
 
     def _constrain_alerts(self):
         # A heads-up has to come before the alert: above the low level, below the charge limit.
@@ -443,7 +496,8 @@ class App(Gtk.Application):
         self.start_hidden = hidden
         self.window = None
         self.tray = None
-        self.tray_fg = icons.LIGHT_FG
+        self.system_scheme = 0  # portal color-scheme: 0 no preference, 1 dark, 2 light
+        self.tray_outline = load_config().get("tray_outline", "auto")
         self._last_snapshot = None
 
     def do_startup(self):
@@ -476,8 +530,9 @@ class App(Gtk.Application):
             self.window = Window(self)
             if self.start_hidden:
                 self.start_hidden = False
-                # The tray registers asynchronously; show the window if none turns up.
-                GLib.timeout_add_seconds(3, self._show_if_no_tray)
+                # The tray registers asynchronously, and at login the panel or bar
+                # may start after us; show the window if no tray turns up.
+                GLib.timeout_add_seconds(10, self._show_if_no_tray)
                 return
         self.window.present()
 
@@ -500,14 +555,32 @@ class App(Gtk.Application):
         namespace, key, value = params.unpack()
         if (namespace, key) == ("org.freedesktop.appearance", "color-scheme"):
             self._set_color_scheme(value)
-            if self._last_snapshot:
-                self.update_tray(self._last_snapshot)
-            else:
-                self.tray.set_icon_pixmaps(("none", self.tray_fg), icons.tray_pixmaps(None, fg=self.tray_fg))
+            self._refresh_tray_icon()
 
     def _set_color_scheme(self, value):
-        # 1 = prefer dark, 2 = prefer light, 0 = no preference (treat as dark: Breeze Dark panels are common).
-        self.tray_fg = icons.DARK_FG if value == 2 else icons.LIGHT_FG
+        self.system_scheme = value
+
+    @property
+    def tray_fg(self):
+        # Without a preference (or without a portal, common on bare compositors)
+        # assume a dark panel; Settings lets the user force either.
+        if self.tray_outline == "light":
+            return icons.LIGHT_FG
+        if self.tray_outline == "dark":
+            return icons.DARK_FG
+        return icons.DARK_FG if self.system_scheme == 2 else icons.LIGHT_FG
+
+    def set_tray_outline(self, value):
+        self.tray_outline = value
+        self._refresh_tray_icon()
+
+    def _refresh_tray_icon(self):
+        if not self.tray:
+            return
+        if self._last_snapshot:
+            self.update_tray(self._last_snapshot)
+        else:
+            self.tray.set_icon_pixmaps(("none", self.tray_fg), icons.tray_pixmaps(None, fg=self.tray_fg))
 
     def tray_available(self):
         return bool(self.tray and self.tray.available)

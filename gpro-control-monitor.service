@@ -1,7 +1,8 @@
 [Unit]
 Description=G PRO Control battery alerts
-PartOf=graphical-session.target
-After=graphical-session.target
+# Started with the user session rather than graphical-session.target, which
+# many compositors (Hyprland, Sway, i3, niri, ...) never start. It only needs
+# the session D-Bus; if no notification daemon is up yet it retries.
 
 [Service]
 ExecStart=/usr/bin/gpro-control monitor
@@ -9,4 +10,4 @@ Restart=on-failure
 RestartSec=10
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=default.target

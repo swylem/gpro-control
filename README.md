@@ -22,6 +22,20 @@ makepkg -si
 
 This installs `/usr/bin/gpro-control`, a menu entry, a systemd user service for the alerts, and a udev rule that gives your logged-in user access to Logitech HID devices. After installing, unplug and replug the mouse or receiver once (or run `sudo udevadm trigger`).
 
+## Compatibility
+
+Works on any Arch-based distro (Arch, CachyOS, EndeavourOS, Manjaro, Garuda, ...) with any desktop or compositor, X11 or Wayland. The window and mouse control work everywhere. The extras depend on what your desktop provides, and the app degrades gracefully without them:
+
+| Feature | Needs | Without it |
+|---|---|---|
+| Tray icon | A StatusNotifierItem tray: KDE, XFCE, LXQt, Cinnamon, Waybar's `tray` module, GNOME with the AppIndicator extension | Closing the window quits the app, so you're never left with a hidden app |
+| Alert popups | A notification daemon: built into full desktops; `mako`, `dunst` or `swaync` on window managers | Settings → Alerts → **Test** tells you none is running |
+| Background alerts | systemd user session (every systemd-based Arch distro) | Alerts run inside the app while it's open |
+| Start at login | A desktop that runs XDG autostart | The Settings page shows the line to add for Hyprland, Sway, i3, niri, river or Wayfire |
+| Tray icon light/dark | `xdg-desktop-portal` | Assumes a dark bar; Settings → **Tray icon outline** lets you pick White or Black |
+
+Non-systemd Arch derivatives (e.g. Artix) are untested. The udev permission rule uses logind's `uaccess` tag, and the background alerts need systemd, so expect alerts to run only while the app is open there.
+
 ## Run from source
 
 ```bash

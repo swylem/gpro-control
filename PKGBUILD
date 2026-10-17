@@ -1,11 +1,14 @@
 # Local package: build with `makepkg -si` from this directory.
 pkgname=gpro-control
-pkgver=0.5.0
+pkgver=0.6.0
 pkgrel=1
 pkgdesc="Battery status and DPI control for Logitech G PRO wireless mice"
 arch=('any')
 license=('MIT')
 depends=('python' 'python-gobject' 'gtk4' 'librsvg')
+optdepends=('xdg-desktop-portal: tray icon follows light/dark mode'
+            'notification-daemon: alert popups on bare window managers (or mako, dunst, swaync)'
+            'gnome-shell-extension-appindicator: tray icon on GNOME')
 source=()
 
 package() {
