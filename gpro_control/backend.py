@@ -58,6 +58,9 @@ class Backend(threading.Thread):
     def use_onboard_profile(self):
         self.commands.put(("onboard", None))
 
+    def set_setting(self, key, value):
+        self.commands.put(("setting", (key, value)))
+
     def set_alerts(self, settings):
         self.commands.put(("alerts", settings))
 
@@ -134,6 +137,11 @@ class Backend(threading.Thread):
             save_config(self.config)
             return
         if cmd == "refresh":
+            return
+        if cmd == "setting":
+            key, value = arg
+            self.config[key] = value
+            save_config(self.config)
             return
         if cmd == "alerts":
             self.config["alerts"] = arg

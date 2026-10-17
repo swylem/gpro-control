@@ -1,6 +1,7 @@
 """gpro-control: GUI by default, plus a tiny CLI for scripts.
 
-  gpro-control                 open the window
+  gpro-control                 open the window (the app then lives in the tray)
+  gpro-control --hidden        start in the tray without showing the window
   gpro-control status          print battery and DPI
   gpro-control dpi 1600        set DPI (switches the mouse to host mode)
   gpro-control onboard         hand control back to the mouse's onboard profile
@@ -84,11 +85,12 @@ def cli(args):
 
 
 def main():
-    if len(sys.argv) > 1:
-        return cli(sys.argv[1:])
+    args = sys.argv[1:]
+    if args and args != ["--hidden"]:
+        return cli(args)
     from .app import run
 
-    return run()
+    return run(hidden=args == ["--hidden"])
 
 
 if __name__ == "__main__":

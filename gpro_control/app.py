@@ -1,4 +1,4 @@
-"""GTK4 window: battery status and DPI control."""
+"""GTK4 app: battery status, DPI control, alerts, and a tray icon."""
 
 import gi
 
@@ -6,12 +6,15 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 import bisect  # noqa: E402
 import math  # noqa: E402
+import os  # noqa: E402
+import shutil  # noqa: E402
 
-from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from .alerts import notify  # noqa: E402
 from .backend import Backend, Snapshot  # noqa: E402
-from .config import alert_settings  # noqa: E402
+from .config import CONFIG_DIR, alert_settings  # noqa: E402
+from .tray import MenuItem, TrayIcon  # noqa: E402
 
 APP_ID = "io.github.gpro_control"
 PRESETS = [400, 800, 1200, 1600, 3200]
@@ -40,6 +43,10 @@ ALERT_MODE_TEXT = {
     "off": "All alerts are off.",
 }
 
+CLOSE_ACTIONS = [("tray", "Keep running in the tray"), ("quit", "Quit G PRO Control")]
+
+AUTOSTART_FILE = os.path.join(os.path.dirname(CONFIG_DIR), "autostart", "gpro-control.desktop")
+
 UDEV_HINT = (
     "No permission to talk to the mouse, so DPI can't be changed.\n"
     "Install the udev rule (see README) and replug the mouse or receiver."
@@ -62,16 +69,23 @@ class Window(Gtk.ApplicationWindow):
         self._syncing = False
         self._spin_prev = 0
 
-        header = Gtk.HeaderBar()
+        self.connect("close-request", self._on_close_request)
+
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
+        header = Gtk.HeaderBar(title_widget=Gtk.StackSwitcher(stack=self.stack))
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh now")
         refresh.connect("clicked", lambda *_: self.backend.refresh())
         header.pack_end(refresh)
         self.set_titlebar(header)
 
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         for side in ("top", "bottom", "start", "end"):
-            getattr(root, f"set_margin_{side}")(18)
-        self.set_child(root)
+            getattr(outer, f"set_margin_{side}")(18)
+        outer.append(self.stack)
+        self.set_child(outer)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        self.stack.add_titled(root, "mouse", "Mouse")
 
         # Device ----------------------------------------------------------
         self.name_lbl = _label("Looking for your mouse…", ["title-2"])
@@ -140,11 +154,88 @@ class Window(Gtk.ApplicationWindow):
         self.msg_lbl = _label("", ["dim"], wrap=True)
 
         self.backend = Backend(lambda snap: GLib.idle_add(self._update, snap))
-        root.append(self._build_alerts(alert_settings(self.backend.config)))
-        root.append(self.msg_lbl)
+        self.settings = dict(self.backend.config)  # UI-side copy; the backend saves
+        self.stack.add_titled(self._page(self._build_alerts(alert_settings(self.backend.config))), "alerts", "Alerts")
+        self.stack.add_titled(self._page(self._build_settings()), "settings", "Settings")
+        outer.append(self.msg_lbl)
         self.restore_chk.set_active(self.backend.config.get("restore", True))
         self.restore_chk.connect("toggled", lambda b: self.backend.set_restore(b.get_active()))
         self.backend.start()
+
+    @staticmethod
+    def _page(*children):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        for c in children:
+            box.append(c)
+        return box
+
+    # -- closing / tray -------------------------------------------------------
+
+    def _on_close_request(self, _win):
+        app = self.get_application()
+        if self.settings.get("close_action", "tray") == "tray" and app.tray_available():
+            self.set_visible(False)
+            return True  # keep the window (and its state) for next time
+        app.quit()
+        return False
+
+    def toggle(self):
+        if self.is_visible() and self.get_application().tray_available():
+            self.set_visible(False)
+        else:
+            self.present()
+
+    # -- settings -------------------------------------------------------------
+
+    def _build_settings(self):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, css_classes=["card"])
+        card.append(_label("General", ["section"]))
+
+        row = Gtk.Box(spacing=8)
+        row.append(_label("When closing the window", hexpand=True))
+        self.close_dd = Gtk.DropDown.new_from_strings([text for _, text in CLOSE_ACTIONS])
+        keys = [key for key, _ in CLOSE_ACTIONS]
+        self.close_dd.set_selected(keys.index(self.settings.get("close_action", "tray")))
+        self.close_dd.connect("notify::selected", lambda dd, _p: self._set_setting("close_action", keys[dd.get_selected()]))
+        row.append(self.close_dd)
+        card.append(row)
+
+        self.autostart_chk = Gtk.CheckButton(label="Start at login (in the tray)", active=os.path.exists(AUTOSTART_FILE))
+        self.autostart_chk.connect("toggled", lambda b: self._set_autostart(b.get_active()))
+        card.append(self.autostart_chk)
+
+        self.tray_note = _label("", ["dim"], wrap=True)
+        card.append(self.tray_note)
+
+        quit_btn = Gtk.Button(label="Quit G PRO Control", halign=Gtk.Align.START)
+        quit_btn.connect("clicked", lambda *_: self.get_application().quit())
+        card.append(quit_btn)
+        self.update_tray_note()
+        return card
+
+    def update_tray_note(self):
+        if self.get_application().tray_available():
+            self.tray_note.set_text("Quit from the tray icon's menu, this button, or Ctrl+Q.")
+        else:
+            self.tray_note.set_text("No system tray found, so closing the window quits the app.")
+
+    def _set_setting(self, key, value):
+        self.settings[key] = value
+        self.backend.set_setting(key, value)
+
+    def _set_autostart(self, enabled):
+        if not enabled:
+            try:
+                os.remove(AUTOSTART_FILE)
+            except FileNotFoundError:
+                pass
+            return
+        # Installed: the launcher on PATH. From a checkout: the launcher next to the package.
+        exe = shutil.which("gpro-control") or os.path.join(os.path.dirname(os.path.dirname(__file__)), "gpro-control")
+        os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
+        with open(AUTOSTART_FILE, "w") as f:
+            f.write("[Desktop Entry]\nType=Application\nName=G PRO Control\n"
+                    f"Exec={exe} --hidden\nIcon=input-mouse\nX-GNOME-Autostart-enabled=true\n")
 
     # -- alerts -------------------------------------------------------------
 
@@ -341,12 +432,16 @@ class Window(Gtk.ApplicationWindow):
             self.msg_lbl.set_text("This device doesn't support DPI changes.")
         else:
             self.msg_lbl.set_text(s.message)
+        self.get_application().update_tray(s)
         return False
 
 
 class App(Gtk.Application):
-    def __init__(self):
+    def __init__(self, hidden=False):
         super().__init__(application_id=APP_ID)
+        self.start_hidden = hidden
+        self.window = None
+        self.tray = None
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
@@ -354,11 +449,79 @@ class App(Gtk.Application):
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        quit_action = Gio.SimpleAction.new("quit", None)
+        quit_action.connect("activate", lambda *_: self.quit())
+        self.add_action(quit_action)
+        self.set_accels_for_action("app.quit", ["<Control>q"])
+
+        try:
+            self.tray = TrayIcon(APP_ID, "G PRO Control", self._on_tray_click, self._on_tray_available)
+        except GLib.Error:
+            self.tray = None
+        self.hold()  # keep running while the window is hidden in the tray
+
+    def do_shutdown(self):
+        if self.tray:
+            self.tray.close()
+        Gtk.Application.do_shutdown(self)
 
     def do_activate(self):
-        win = self.get_active_window() or Window(self)
-        win.present()
+        if not self.window:
+            self.window = Window(self)
+            if self.start_hidden:
+                self.start_hidden = False
+                # The tray registers asynchronously; show the window if none turns up.
+                GLib.timeout_add_seconds(3, self._show_if_no_tray)
+                return
+        self.window.present()
+
+    def tray_available(self):
+        return bool(self.tray and self.tray.available)
+
+    def _show_if_no_tray(self):
+        if not self.tray_available():
+            self.window.present()
+        return False
+
+    def _on_tray_click(self):
+        if self.window:
+            self.window.toggle()
+
+    def _on_tray_available(self, available):
+        if self.window:
+            self.window.update_tray_note()
+            if not available and not self.window.is_visible():
+                self.window.present()  # never leave the app running with no way back in
+
+    def _open(self):
+        if self.window:
+            self.window.present()
+
+    def update_tray(self, s):
+        if not self.tray:
+            return
+        b, title = s.battery, s.name or "G PRO Control"
+        lines = []
+        if b and b.percent is not None:
+            level = min(100, max(0, round(b.percent / 10) * 10))
+            self.tray.set_icon(f"battery-{level:03d}{'-charging' if b.charging else ''}")
+            battery_text = f"{b.percent}% · {STATUS_TEXT.get(b.status, b.status)}"
+            lines.append(battery_text)
+        else:
+            self.tray.set_icon("input-mouse")
+            battery_text = "not available"
+        if s.dpi:
+            lines.append(f"{s.dpi.current} DPI")
+        self.tray.set_tooltip(title, "\n".join(lines) or "Looking for your mouse…")
+        self.tray.set_menu([
+            MenuItem("Open G PRO Control", self._open),
+            MenuItem(separator=True),
+            MenuItem(f"Battery: {battery_text}", enabled=False),
+            MenuItem(f"DPI: {s.dpi.current}" if s.dpi else "DPI: –", enabled=False),
+            MenuItem(separator=True),
+            MenuItem("Quit", self.quit),
+        ])
 
 
-def run():
-    return App().run(None)
+def run(hidden=False):
+    return App(hidden).run(None)
