@@ -63,7 +63,7 @@ Works on any Arch-based distro (Arch, CachyOS, EndeavourOS, Manjaro, Garuda, ...
 | Tray icon | A StatusNotifierItem tray: KDE, XFCE, LXQt, Cinnamon, Waybar's `tray` module, GNOME with the AppIndicator extension | Setup check adds the tray to Waybar or enables GNOME's extension; otherwise closing the window quits the app |
 | Alert popups | A notification daemon: built into full desktops; `mako`, `dunst` or `swaync` on window managers | Setup check installs `dunst`; Alerts → **Test** tells you if none is running |
 | Background alerts | systemd user session (every systemd-based Arch distro) | Alerts run inside the app while it's open |
-| Start at login | A desktop that runs XDG autostart | Setup check adds the startup line to your Hyprland, Sway, i3, niri, river or Wayfire config |
+| Start at login | A desktop that runs XDG autostart, or a session started through systemd (uwsm, or a compositor that starts `xdg-desktop-autostart.target`) | Setup check adds the startup line to your Hyprland (`hyprland.lua` on 0.56+, or `hyprland.conf`), Sway, i3, niri, river or Wayfire config |
 | Tray icon light/dark | `xdg-desktop-portal` | Assumes a dark bar; Settings → **Tray icon outline** lets you pick White or Black |
 
 Non-systemd Arch derivatives (e.g. Artix) are untested. The udev permission rule uses logind's `uaccess` tag, and the background alerts need systemd, so expect alerts to run only while the app is open there.

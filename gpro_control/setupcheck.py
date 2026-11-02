@@ -58,10 +58,21 @@ def desktop_names():
     return [d for d in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":") if d]
 
 
+def _systemd_runs_xdg_autostart():
+    """True when systemd started this session's autostart folder (uwsm, or a compositor
+    config that starts graphical-session.target and xdg-desktop-autostart.target)."""
+    try:
+        return subprocess.run(["systemctl", "--user", "is-active", "--quiet", "xdg-desktop-autostart.target"],
+                              timeout=3).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def runs_xdg_autostart():
     desktops = [d.lower() for d in desktop_names()]
     return (any(d in XDG_AUTOSTART_DESKTOPS or d.startswith("budgie") for d in desktops)
-            or bool(os.environ.get("UWSM_FINALIZE_VARNAMES")))
+            or bool(os.environ.get("UWSM_FINALIZE_VARNAMES"))
+            or _systemd_runs_xdg_autostart())
 
 
 def launch_command():
@@ -375,32 +386,62 @@ def _niri_line(cmd):
     return "spawn-at-startup " + " ".join(json.dumps(a) for a in shlex.split(cmd))
 
 
-# name -> (config files relative to ~/.config or ~, how to write the startup line)
+def _hyprland_lua_line(cmd):
+    return f"hl.on(\"hyprland.start\", function() hl.exec_cmd({json.dumps(cmd)}) end)"
+
+
+# name -> [(config file relative to ~/.config or ~, how to write the startup line)], in the order
+# the compositor looks for them. Hyprland 0.56+ reads hyprland.lua and ignores hyprland.conf.
 COMPOSITORS = {
-    "hyprland": (["hypr/hyprland.conf"], lambda c: f"exec-once = {c}"),
-    "sway": (["sway/config", "~/.sway/config"], lambda c: f"exec {c}"),
-    "i3": (["i3/config", "~/.i3/config"], lambda c: f"exec --no-startup-id {c}"),
-    "niri": (["niri/config.kdl"], _niri_line),
-    "river": (["river/init"], lambda c: f"riverctl spawn '{c}'"),
-    "wayfire": (["wayfire.ini"], lambda c: f"gpro_control = {c}"),
+    "hyprland": [("hypr/hyprland.lua", _hyprland_lua_line), ("hypr/hyprland.conf", lambda c: f"exec-once = {c}")],
+    "sway": [("sway/config", lambda c: f"exec {c}"), ("~/.sway/config", lambda c: f"exec {c}")],
+    "i3": [("i3/config", lambda c: f"exec --no-startup-id {c}"), ("~/.i3/config", lambda c: f"exec --no-startup-id {c}")],
+    "niri": [("niri/config.kdl", _niri_line)],
+    "river": [("river/init", lambda c: f"riverctl spawn '{c}'")],
+    "wayfire": [("wayfire.ini", lambda c: f"gpro_control = {c}")],
 }
 
 
+def _config_path(p):
+    return os.path.expanduser(p) if p.startswith("~") else os.path.join(CONFIG_HOME, p)
+
+
 def compositor_config(name):
-    paths, _ = COMPOSITORS[name]
-    for p in paths:
-        path = os.path.expanduser(p) if p.startswith("~") else os.path.join(CONFIG_HOME, p)
-        if os.path.isfile(path):
-            return path
-    return None
+    """(path, make_line) of the config file the compositor reads, or (None, make_line of its first kind)."""
+    for p, make_line in COMPOSITORS[name]:
+        if os.path.isfile(_config_path(p)):
+            return _config_path(p), make_line
+    return None, COMPOSITORS[name][0][1]
 
 
-def add_to_compositor(name, path):
-    _, make_line = COMPOSITORS[name]
+def _code_lines(path):
+    """The file's text without whole-line comments (#, //, -- for Lua)."""
+    try:
+        with open(path, errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return ""
+    return "\n".join(l for l in lines if not l.lstrip().startswith(("#", "//", "--")))
+
+
+def config_starts_app(path):
+    """True if the config, or a file split off next to it, launches the app.
+
+    Configs are often split into several files (Hyprland's conf/*.lua modules, `source =`
+    or `include` lines), so the whole folder is searched for files of the same kind."""
+    folder, ext = os.path.dirname(path), os.path.splitext(path)[1]
+    files = [path]
+    if folder not in (CONFIG_HOME, HOME):  # only a compositor's own folder, never all of ~/.config
+        files += [f for f in glob.glob(os.path.join(folder, "**", "*" + ext), recursive=True)
+                  if os.path.isfile(f) and not f.endswith(".bak")]
+    return any("gpro-control" in _code_lines(f) for f in files)
+
+
+def add_to_compositor(name, path, make_line):
     line = make_line(launch_command())
     with open(path) as f:
         text = f.read()
-    if "gpro-control" in text:
+    if config_starts_app(path):
         return True, "Already there."
     if name == "wayfire":
         if re.search(r"^\[autostart\]\s*$", text, re.M):
@@ -408,7 +449,8 @@ def add_to_compositor(name, path):
         else:
             new = text.rstrip("\n") + f"\n\n[autostart]\n{line}\n"
     else:
-        new = text.rstrip("\n") + f"\n\n# G PRO Control: start in the tray at login\n{line}\n"
+        comment = "--" if path.endswith(".lua") else "#"
+        new = text.rstrip("\n") + f"\n\n{comment} G PRO Control: start in the tray at login\n{line}\n"
     backup = _backup(path)
     with open(path, "w") as f:
         f.write(new)
@@ -425,14 +467,13 @@ def check_autostart():
     names = desktop_names()
     key = names[0].lower() if names else ""
     if key in COMPOSITORS:
-        path = compositor_config(key)
+        path, make_line = compositor_config(key)
         if path:
-            with open(path) as f:
-                if "gpro-control" in f.read():
-                    return Check("autostart", title, OK, f"Starts from your {names[0]} config at login.")
+            if config_starts_app(path):
+                return Check("autostart", title, OK, f"Starts from your {names[0]} config at login.")
             return Check("autostart", title, INFO, f"{names[0]} doesn't start apps from the autostart folder.",
-                         f"Add to {names[0]} config", lambda: add_to_compositor(key, path))
-        line = COMPOSITORS[key][1](launch_command())
+                         f"Add to {names[0]} config", lambda: add_to_compositor(key, path, make_line))
+        line = make_line(launch_command())
         return Check("autostart", title, INFO, f"No {names[0]} config file found. To start at login, add:\n{line}")
     return Check("autostart", title, INFO, "Your desktop may not run login apps by itself. "
                  f"To start at login, add this to its startup:\n{launch_command()}")
